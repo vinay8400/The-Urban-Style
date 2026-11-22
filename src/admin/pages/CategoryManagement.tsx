@@ -1,5 +1,5 @@
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowLeft,
@@ -16,6 +16,12 @@ import {
   Search,
   Power,
 } from "lucide-react";
+import {
+  deleteCategories,
+  saveCategory as createCategory,
+  updateCategory,
+  useSupabaseCatalogue,
+} from "../../data/supabaseCatalogue";
 
 interface Category {
   id: string;
@@ -25,56 +31,15 @@ interface Category {
   createdAt: string;
 }
 
-const STORAGE_KEY = "urban-style-categories";
-
-const starterCategories: Category[] = [
-  {
-    id: "men",
-    name: "Men",
-    parentId: null,
-    active: true,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "women",
-    name: "Women",
-    parentId: null,
-    active: true,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "kids",
-    name: "Kids",
-    parentId: null,
-    active: true,
-    createdAt: new Date().toISOString(),
-  },
-];
-
-function loadCategories(): Category[] {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved === null) return starterCategories;
-
-    const parsed = JSON.parse(saved);
-    return Array.isArray(parsed) ? parsed : starterCategories;
-  } catch {
-    return starterCategories;
-  }
-}
-
 export default function CategoryManagement() {
-  const [categories, setCategories] = useState<Category[]>(loadCategories);
+  const { categories, loading, error: catalogueError } = useSupabaseCatalogue(true);
   const [categoryName, setCategoryName] = useState("");
   const [parentId, setParentId] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string[]>([]);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(categories));
-  }, [categories]);
+  const [saving, setSaving] = useState(false);
 
   const childrenOf = (id: string) =>
     categories.filter((category) => category.parentId === id);
@@ -110,7 +75,7 @@ export default function CategoryManagement() {
     setError("");
   };
 
-  const saveCategory = (event: React.FormEvent<HTMLFormElement>) => {
+  const saveCategory = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
     const name = categoryName.trim();
@@ -139,31 +104,34 @@ export default function CategoryManagement() {
       return;
     }
 
-    if (editingId) {
-      setCategories((current) =>
-        current.map((item) =>
-          item.id === editingId
-            ? { ...item, name, parentId: selectedParent }
-            : item,
-        ),
-      );
-    } else {
-      const newCategory: Category = {
-        id: `cat-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-        name,
-        parentId: selectedParent,
-        active: true,
-        createdAt: new Date().toISOString(),
-      };
-
-      setCategories((current) => [...current, newCategory]);
-
-      if (selectedParent && !expanded.includes(selectedParent)) {
-        setExpanded((current) => [...current, selectedParent]);
+    setSaving(true);
+    setError("");
+    try {
+      if (editingId) {
+        const category = categories.find((item) => item.id === editingId);
+        if (!category) throw new Error("This category no longer exists.");
+        await updateCategory({
+          id: editingId,
+          name,
+          parentId: selectedParent,
+          active: category.active,
+        });
+      } else {
+        await createCategory({
+          name,
+          parentId: selectedParent,
+          active: true,
+        });
+        if (selectedParent && !expanded.includes(selectedParent)) {
+          setExpanded((current) => [...current, selectedParent]);
+        }
       }
+      resetForm();
+    } catch (saveError) {
+      setError(saveError instanceof Error ? saveError.message : "Unable to save category.");
+    } finally {
+      setSaving(false);
     }
-
-    resetForm();
   };
 
   const editCategory = (category: Category) => {
@@ -174,7 +142,7 @@ export default function CategoryManagement() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const deleteCategory = (category: Category) => {
+  const deleteCategory = async (category: Category) => {
     const idsToDelete = new Set([
       category.id,
       ...getDescendantIds(category.id),
@@ -189,9 +157,13 @@ export default function CategoryManagement() {
 
     if (!window.confirm(message)) return;
 
-    setCategories((current) =>
-      current.filter((item) => !idsToDelete.has(item.id)),
-    );
+    setError("");
+    try {
+      await deleteCategories([...idsToDelete]);
+    } catch (deleteError) {
+      setError(deleteError instanceof Error ? deleteError.message : "Unable to delete category.");
+      return;
+    }
 
     setExpanded((current) =>
       current.filter((id) => !idsToDelete.has(id)),
@@ -200,12 +172,20 @@ export default function CategoryManagement() {
     if (editingId && idsToDelete.has(editingId)) resetForm();
   };
 
-  const toggleActive = (id: string) => {
-    setCategories((current) =>
-      current.map((item) =>
-        item.id === id ? { ...item, active: !item.active } : item,
-      ),
-    );
+  const toggleActive = async (id: string) => {
+    const category = categories.find((item) => item.id === id);
+    if (!category) return;
+    setError("");
+    try {
+      await updateCategory({
+        id,
+        name: category.name,
+        parentId: category.parentId,
+        active: !category.active,
+      });
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Unable to update category.");
+    }
   };
 
   const toggleExpanded = (id: string) => {
@@ -341,7 +321,7 @@ export default function CategoryManagement() {
               <button
                 type="button"
                 title="Activate or deactivate"
-                onClick={() => toggleActive(category.id)}
+                onClick={() => void toggleActive(category.id)}
               >
                 <Power size={15} />
               </button>
@@ -349,7 +329,7 @@ export default function CategoryManagement() {
               <button
                 type="button"
                 title="Delete category and descendants"
-                onClick={() => deleteCategory(category)}
+                onClick={() => void deleteCategory(category)}
                 className="category-delete-action"
               >
                 <Trash2 size={15} />
@@ -400,6 +380,8 @@ export default function CategoryManagement() {
       </div>
 
       <section className="category-form-card">
+        {catalogueError && <p className="category-form-error" role="alert">{catalogueError}</p>}
+        {loading && <p className="category-form-hint">Loading categories from Supabase…</p>}
         <div className="category-section-title">
           <div>
             <span>{editingId ? "EDIT CATEGORY" : "CREATE CATEGORY"}</span>
@@ -417,7 +399,7 @@ export default function CategoryManagement() {
           )}
         </div>
 
-        <form onSubmit={saveCategory} className="category-form">
+        <form onSubmit={(event) => void saveCategory(event)} className="category-form">
           <label>
             Category Name *
             <input
@@ -445,7 +427,7 @@ export default function CategoryManagement() {
 
           {error && <p className="category-form-error">{error}</p>}
 
-          <button type="submit" className="category-submit-button">
+          <button type="submit" className="category-submit-button" disabled={saving || loading}>
             {editingId ? <Check size={16} /> : <Plus size={16} />}
             {editingId ? "Save Changes" : "Add Category"}
           </button>

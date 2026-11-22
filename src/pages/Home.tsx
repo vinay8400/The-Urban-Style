@@ -1,26 +1,14 @@
 import { Link } from "react-router-dom";
 import { ArrowRight, Heart, Star, Truck, ShieldCheck, RefreshCw } from "lucide-react";
-import { usePublishedAdminProducts } from "../data/adminProductCatalog";
+import { useSupabaseCatalogue } from "../data/supabaseCatalogue";
 import type { Product } from "../data/products";
 
-const categories = [
-  {
-    name: "Men",
-    image: "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=700&q=85",
-  },
-  {
-    name: "Women",
-    image: "https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=700&q=85",
-  },
-  {
-    name: "Kids",
-    image: "https://images.unsplash.com/photo-1503919005314-30d93d07d823?auto=format&fit=crop&w=700&q=85",
-  },
-  {
-    name: "Accessories",
-    image: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=700&q=85",
-  },
-];
+const categoryImages: Record<string, string> = {
+  men: "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=700&q=85",
+  women: "https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=700&q=85",
+  kids: "https://images.unsplash.com/photo-1503919005314-30d93d07d823?auto=format&fit=crop&w=700&q=85",
+  accessories: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=700&q=85",
+};
 
 const money = (amount: number) =>
   new Intl.NumberFormat("en-IN", {
@@ -62,7 +50,7 @@ function ProductCard({ product }: { product: Product }) {
 }
 
 export default function Home() {
-  const products = usePublishedAdminProducts();
+  const { products, categories, loading, error, imageError } = useSupabaseCatalogue();
 
   return (
     <main className="home-page">
@@ -107,13 +95,13 @@ export default function Home() {
         </div>
 
         <div className="home-category-grid">
-          {categories.map((category) => (
+          {categories.filter((category) => category.active && !category.parentId).map((category) => (
             <Link
               to={`/category/${category.name.toLowerCase()}`}
               className="home-category-card"
-              key={category.name}
+              key={category.id}
             >
-              <img src={category.image} alt={category.name} loading="lazy" />
+              <img src={categoryImages[category.name.toLowerCase()] ?? categoryImages.men} alt={category.name} loading="lazy" />
               <span>{category.name}</span>
               <ArrowRight size={17} />
             </Link>
@@ -129,9 +117,12 @@ export default function Home() {
           </div>
           <Link to="/category/men">View all <ArrowRight size={16} /></Link>
         </div>
+        {error && <p className="catalogue-error" role="alert">{error}</p>}
+        {!error && imageError && <p className="catalogue-error" role="alert">{imageError}</p>}
+        {loading && <p className="catalogue-status">Loading published products…</p>}
         <div className="home-product-grid">
           {products.map((product) => <ProductCard key={product.id} product={product} />)}
-          {products.length === 0 && (
+          {!loading && !error && products.length === 0 && (
             <p className="home-catalogue-empty">New products will appear here soon.</p>
           )}
         </div>

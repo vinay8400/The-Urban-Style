@@ -1,5 +1,5 @@
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   Plus,
@@ -17,8 +17,12 @@ import {
 } from "lucide-react";
 import {
   normalizeVariantStock,
-  notifyAdminProductsChanged,
 } from "../../data/adminProductCatalog";
+import {
+  deleteAdminProduct,
+  setProductStatus,
+  useSupabaseCatalogue,
+} from "../../data/supabaseCatalogue";
 
 interface ProductSizeStock {
   size: string;
@@ -43,20 +47,6 @@ interface AdminProduct {
   featured?: boolean;
   status: "published" | "draft";
   createdAt: string;
-}
-
-const PRODUCT_STORAGE_KEY = "urban-style-products";
-
-function loadProducts(): AdminProduct[] {
-  try {
-    const saved = localStorage.getItem(PRODUCT_STORAGE_KEY);
-    if (!saved) return [];
-
-    const parsed = JSON.parse(saved);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
 }
 
 function getTotalStock(product: AdminProduct) {
@@ -85,15 +75,32 @@ function getStockStatus(product: AdminProduct) {
 }
 
 export default function AdminProducts() {
-  const [products, setProducts] = useState<AdminProduct[]>(loadProducts);
+  const { products: rows, loading, error: catalogueError } = useSupabaseCatalogue(true);
+  const products = useMemo<AdminProduct[]>(
+    () => rows.map((product) => ({
+      id: product.id,
+      name: product.name,
+      sku: product.sku ?? "",
+      categoryPath: product.category,
+      image: product.images[0] ?? "",
+      images: product.images,
+      description: product.description,
+      categoryId: product.categoryId,
+      colors: product.colors.map(({ name, hex }) => ({ name, hex })),
+      originalPrice: product.oldPrice,
+      discountPercent: product.discountPercent,
+      sizes: product.variants,
+      lowStockThreshold: product.lowStockThreshold ?? 5,
+      featured: product.featured,
+      status: product.status ?? "draft",
+      createdAt: product.createdAt,
+    })),
+    [rows],
+  );
   const [search, setSearch] = useState("");
   const [stockFilter, setStockFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
-
-  useEffect(() => {
-    localStorage.setItem(PRODUCT_STORAGE_KEY, JSON.stringify(products));
-    notifyAdminProductsChanged();
-  }, [products]);
+  const [actionError, setActionError] = useState("");
 
   const filteredProducts = useMemo(() => {
     return products.filter((product) => {
@@ -133,30 +140,31 @@ export default function AdminProducts() {
     (product) => getStockStatus(product) === "out",
   ).length;
 
-  const deleteProduct = (product: AdminProduct) => {
+  const deleteProduct = async (product: AdminProduct) => {
     const confirmed = window.confirm(
       `Delete "${product.name}"? This action cannot be undone.`,
     );
 
     if (!confirmed) return;
 
-    setProducts((current) =>
-      current.filter((item) => item.id !== product.id),
-    );
+    setActionError("");
+    try {
+      await deleteAdminProduct(product.id);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Unable to delete product.");
+    }
   };
 
-  const togglePublish = (id: string) => {
-    setProducts((current) =>
-      current.map((product) =>
-        product.id === id
-          ? {
-              ...product,
-              status:
-                product.status === "published" ? "draft" : "published",
-            }
-          : product,
-      ),
-    );
+  const togglePublish = async (product: AdminProduct) => {
+    setActionError("");
+    try {
+      await setProductStatus(
+        product.id,
+        product.status === "published" ? "draft" : "published",
+      );
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Unable to update product publication.");
+    }
   };
 
   const formatPrice = (price: number) =>
@@ -223,6 +231,12 @@ export default function AdminProducts() {
       </section>
 
       <section className="admin-product-table-card">
+        {(catalogueError || actionError) && (
+          <p className="admin-add-product-error" role="alert">
+            {actionError || catalogueError}
+          </p>
+        )}
+        {loading && <p className="admin-add-product-hint">Loading products from Supabase…</p>}
         <div className="admin-product-toolbar">
           <div>
             <h2>All Products</h2>
@@ -264,7 +278,7 @@ export default function AdminProducts() {
           </div>
         </div>
 
-        {filteredProducts.length === 0 ? (
+        {loading ? null : filteredProducts.length === 0 && !catalogueError ? (
           <div className="admin-products-empty">
             <Package size={38} />
             <h3>{products.length === 0 ? "No products yet" : "No matching products"}</h3>
@@ -378,7 +392,7 @@ export default function AdminProducts() {
                                 ? "Move to draft"
                                 : "Publish product"
                             }
-                            onClick={() => togglePublish(product.id)}
+                            onClick={() => void togglePublish(product)}
                           >
                             {product.status === "published" ? (
                               <EyeOff size={15} />
@@ -391,7 +405,7 @@ export default function AdminProducts() {
                             type="button"
                             title="Delete product"
                             className="admin-product-delete"
-                            onClick={() => deleteProduct(product)}
+                            onClick={() => void deleteProduct(product)}
                           >
                             <Trash2 size={15} />
                           </button>

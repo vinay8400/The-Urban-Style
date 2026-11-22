@@ -16,11 +16,9 @@ import {
   ShoppingBag,
 } from "lucide-react";
 import {
-  getPublishedAdminProducts,
   getVariantStock,
-  normalizeVariantStock,
-  notifyAdminProductsChanged,
 } from "../data/adminProductCatalog";
+import { fetchCatalogue } from "../data/supabaseCatalogue";
 
 interface CartItem {
   productId: string;
@@ -39,7 +37,6 @@ type PaymentMethod = "cod" | "upi" | "store";
 const CART_KEY = "urban-style-cart";
 const ORDERS_KEY = "urban-style-orders";
 const CHECKOUT_INTENT_KEY = "urban-style-checkout-intent";
-const PRODUCT_STORAGE_KEY = "urban-style-products";
 const CHECKOUT_INTENT_MAX_AGE = 30 * 60 * 1000;
 
 type CheckoutMode = "cart" | "buy-now";
@@ -83,25 +80,11 @@ function getCartItemId(item: CartItem) {
   return JSON.stringify([item.productId, item.size, item.color]);
 }
 
-interface InventoryRecord extends Record<string, unknown> {
-  id: string;
-}
-
 interface RequiredVariantStock {
   productId: string;
   size: string;
   color: string;
   quantity: number;
-}
-
-function isInventoryRecord(value: unknown): value is InventoryRecord {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    !Array.isArray(value) &&
-    "id" in value &&
-    typeof value.id === "string"
-  );
 }
 
 const money = (amount: number) =>
@@ -157,7 +140,7 @@ export default function Checkout() {
     0,
   );
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (submittingRef.current) return;
     setError("");
@@ -209,7 +192,7 @@ export default function Checkout() {
         });
       }
 
-      const currentProducts = getPublishedAdminProducts();
+      const { products: currentProducts } = await fetchCatalogue();
       for (const required of requiredStock.values()) {
         const product = currentProducts.find(
           (item) => item.id === required.productId,
@@ -264,14 +247,6 @@ export default function Checkout() {
       if (!Array.isArray(previousOrders)) {
         throw new Error("Unable to read existing orders.");
       }
-      const previousProductsRaw = localStorage.getItem(PRODUCT_STORAGE_KEY);
-      const previousProducts: unknown = JSON.parse(previousProductsRaw || "[]");
-      if (
-        !Array.isArray(previousProducts) ||
-        !previousProducts.every(isInventoryRecord)
-      ) {
-        throw new Error("Unable to safely verify current product inventory.");
-      }
       const previousCartRaw = localStorage.getItem(CART_KEY);
       localStorage.setItem(
         ORDERS_KEY,
@@ -279,51 +254,6 @@ export default function Checkout() {
       );
 
       try {
-        const requiredByProduct = new Map<
-          string,
-          Map<string, RequiredVariantStock>
-        >();
-        for (const required of requiredStock.values()) {
-          const variants =
-            requiredByProduct.get(required.productId) ??
-            new Map<string, RequiredVariantStock>();
-          variants.set(JSON.stringify([required.size, required.color]), required);
-          requiredByProduct.set(required.productId, variants);
-        }
-
-        const updatedProducts = previousProducts.map((record) => {
-          const deductions = requiredByProduct.get(record.id);
-          if (!deductions) return record;
-          if (record.status !== "published") {
-            throw new Error("A product in your checkout is no longer published.");
-          }
-
-          const colors = Array.isArray(record.colors)
-            ? record.colors.filter(
-                (color): color is { name: string } =>
-                  typeof color === "object" &&
-                  color !== null &&
-                  "name" in color &&
-                  typeof color.name === "string",
-              )
-            : [];
-          const variants = normalizeVariantStock(record.sizes, colors);
-          for (const required of deductions.values()) {
-            const variant = variants.find(
-              (item) =>
-                item.size === required.size && item.color === required.color,
-            );
-            if (!variant || variant.stock < required.quantity) {
-              throw new Error(
-                `Insufficient stock for ${String(record.name)} (${required.color}, ${required.size}). Please update your bag.`,
-              );
-            }
-            variant.stock -= required.quantity;
-          }
-          return { ...record, sizes: variants };
-        });
-
-        localStorage.setItem(PRODUCT_STORAGE_KEY, JSON.stringify(updatedProducts));
         if (checkoutMode === "cart") {
           const currentCart = JSON.parse(previousCartRaw || "[]");
           if (!Array.isArray(currentCart)) {
@@ -342,11 +272,6 @@ export default function Checkout() {
         } else {
           localStorage.setItem(ORDERS_KEY, previousOrdersRaw);
         }
-        if (previousProductsRaw === null) {
-          localStorage.removeItem(PRODUCT_STORAGE_KEY);
-        } else {
-          localStorage.setItem(PRODUCT_STORAGE_KEY, previousProductsRaw);
-        }
         if (previousCartRaw === null) {
           localStorage.removeItem(CART_KEY);
         } else {
@@ -355,7 +280,6 @@ export default function Checkout() {
         throw commitError;
       }
 
-      notifyAdminProductsChanged();
       navigate(`/order/success?orderId=${orderId}`);
     } catch (submitError) {
       setError(

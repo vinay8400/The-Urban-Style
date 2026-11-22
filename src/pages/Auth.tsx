@@ -8,7 +8,7 @@ const OAUTH_REDIRECT_KEY = "urban-style-auth-redirect";
 const RECOVERY_COOLDOWN_SECONDS = 60;
 
 function getSafeRedirect(value: string | null) {
-  return value?.startsWith("/") && !value.startsWith("//") ? value : "/account";
+  return value?.startsWith("/") && !value.startsWith("//") ? value : "/";
 }
 
 function getRoleRedirect(isAdmin: boolean, requested: string | null) {
@@ -155,7 +155,7 @@ function AuthPage({ mode }: { mode: "signin" | "signup" }) {
           password,
           options: {
             data: { full_name: name.trim() },
-            emailRedirectTo: `${window.location.origin}/account`,
+            emailRedirectTo: `${window.location.origin}/`,
           },
         });
         if (signupError) {

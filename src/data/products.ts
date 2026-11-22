@@ -30,4 +30,6 @@ export interface Product {
   variants: ProductVariantStock[];
   featured: boolean;
   createdAt: string;
+  status?: "published" | "draft";
+  lowStockThreshold?: number;
 }

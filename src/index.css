@@ -1858,6 +1858,23 @@ img {
   text-align: right;
 }
 
+.catalogue-error,
+.catalogue-status {
+  margin: 14px 0;
+  padding: 12px 14px;
+  border: 1px solid #d6ad60;
+  color: #5b421d;
+  background: #fffaf0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.catalogue-status {
+  border-color: #e8e1d6;
+  color: #70695e;
+  background: #fffdfa;
+}
+
 .auth-page {
   min-height: 570px;
   padding: 64px 20px;

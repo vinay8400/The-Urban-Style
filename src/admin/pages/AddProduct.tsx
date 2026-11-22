@@ -9,8 +9,11 @@ import {
 } from "lucide-react";
 import {
   normalizeVariantStock,
-  notifyAdminProductsChanged,
 } from "../../data/adminProductCatalog";
+import {
+  saveAdminProduct,
+  useSupabaseCatalogue,
+} from "../../data/supabaseCatalogue";
 
 interface Category {
   id: string;
@@ -31,59 +34,13 @@ interface ProductVariantStock {
   stock: number;
 }
 
-interface StoredProduct {
-  id: string;
-  name: string;
-  sku: string;
-  description: string;
-  categoryId: string;
-  categoryPath: string;
-  image: string;
-  images: string[];
-  colors: ProductColor[];
-  originalPrice: number;
-  discountPercent: number;
-  sellingPrice: number;
-  sizes: ProductVariantStock[];
-  lowStockThreshold: number;
-  stockStatus: "in" | "low" | "out";
-  status: "published" | "draft";
-  featured: boolean;
-  createdAt: string;
-}
-
-const PRODUCT_STORAGE_KEY = "urban-style-products";
-const CATEGORY_STORAGE_KEY = "urban-style-categories";
 const PRESET_SIZES = ["S", "M", "L", "XL", "XXL"];
-
-const starterCategories: Category[] = [
-  {
-    id: "men",
-    name: "Men",
-    parentId: null,
-    active: true,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "women",
-    name: "Women",
-    parentId: null,
-    active: true,
-    createdAt: new Date().toISOString(),
-  },
-  {
-    id: "kids",
-    name: "Kids",
-    parentId: null,
-    active: true,
-    createdAt: new Date().toISOString(),
-  },
-];
 
 interface ImagePreview {
   id: string;
   name: string;
   dataUrl: string;
+  storagePath?: string;
 }
 
 function readImage(file: File): Promise<string> {
@@ -106,153 +63,67 @@ function formatCurrency(amount: number) {
   }).format(amount);
 }
 
-function createProductId() {
-  return `product-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-interface InitialFormData {
-  categories: Category[];
-  categoryLoadError: string;
-  product: StoredProduct | null;
-  productLoadError: string;
-}
-
-function readInitialFormData(productId?: string): InitialFormData {
-  let categories = starterCategories;
-  let categoryLoadError = "";
-  let product: StoredProduct | null = null;
-  let productLoadError = "";
-
-  try {
-    const savedCategories = localStorage.getItem(CATEGORY_STORAGE_KEY);
-    if (savedCategories !== null) {
-      const parsed: unknown = JSON.parse(savedCategories);
-      if (!Array.isArray(parsed)) {
-        throw new Error("Saved categories have an invalid format.");
-      }
-      categories = parsed as Category[];
-    }
-  } catch (loadError) {
-    categoryLoadError =
-      loadError instanceof Error
-        ? loadError.message
-        : "Unable to load categories.";
-  }
-
-  if (productId) {
-    try {
-      const savedProducts = localStorage.getItem(PRODUCT_STORAGE_KEY);
-      const records: unknown = savedProducts ? JSON.parse(savedProducts) : [];
-      if (!Array.isArray(records)) {
-        throw new Error("Saved products have an invalid format.");
-      }
-
-      product =
-        records.find(
-          (record): record is StoredProduct =>
-            Boolean(record) &&
-            typeof record === "object" &&
-            "id" in record &&
-            record.id === productId,
-        ) ?? null;
-      if (!product) {
-        throw new Error("This product could not be found.");
-      }
-    } catch (loadError) {
-      productLoadError =
-        loadError instanceof Error
-          ? loadError.message
-          : "Unable to load this product.";
-    }
-  }
-
-  return { categories, categoryLoadError, product, productLoadError };
-}
-
-function productColors(product: StoredProduct | null): ProductColor[] {
-  if (!product) return [];
-  const existingColors = Array.isArray(product.colors) ? product.colors : [];
-  if (existingColors.length > 0) return existingColors;
-  return [
-    ...new Set(
-      Array.isArray(product.sizes)
-        ? product.sizes.map((variant) => variant.color || "Default")
-        : [],
-    ),
-  ].map((color) => ({ name: color, hex: "#c9b89b" }));
-}
-
 export default function AddProduct() {
-  const navigate = useNavigate();
   const { productId } = useParams();
-  const [initialData] = useState(() => readInitialFormData(productId));
-  const initialProduct = initialData.product;
-  const initialColors = productColors(initialProduct);
-  const initialVariants = normalizeVariantStock(
-    initialProduct?.sizes,
-    initialColors,
-  );
-  const initialImages =
-    initialProduct?.images?.length
-      ? initialProduct.images
-      : initialProduct?.image
-        ? [initialProduct.image]
-        : [];
-  const [categories] = useState<Category[]>(initialData.categories);
-  const categoryLoadError = initialData.categoryLoadError;
+  const catalogue = useSupabaseCatalogue(true);
+  if (catalogue.loading) {
+    return <main className="admin-add-product-page"><p>Loading product and categories from Supabase…</p></main>;
+  }
+  if (catalogue.error) {
+    return <main className="admin-add-product-page"><p className="admin-add-product-error" role="alert">{catalogue.error}</p></main>;
+  }
+  const product = catalogue.products.find((item) => item.id === productId);
+  if (productId && !product) {
+    return <main className="admin-add-product-page"><p className="admin-add-product-error" role="alert">This product could not be found in Supabase.</p></main>;
+  }
+  return <AddProductForm key={productId ?? "new"} productId={productId} catalogue={catalogue} initialProduct={product} />;
+}
+
+function AddProductForm({
+  productId,
+  catalogue,
+  initialProduct,
+}: {
+  productId?: string;
+  catalogue: ReturnType<typeof useSupabaseCatalogue>;
+  initialProduct: ReturnType<typeof useSupabaseCatalogue>["products"][number] | undefined;
+}) {
+  const navigate = useNavigate();
+  const initialVariants = normalizeVariantStock(initialProduct?.variants, initialProduct?.colors);
+  const initialImagePaths = initialProduct ? catalogue.imagePaths[initialProduct.id] ?? [] : [];
   const [name, setName] = useState(initialProduct?.name ?? "");
   const [sku, setSku] = useState(initialProduct?.sku ?? "");
   const [description, setDescription] = useState(initialProduct?.description ?? "");
   const [categoryId, setCategoryId] = useState(initialProduct?.categoryId ?? "");
   const [images, setImages] = useState<ImagePreview[]>(
-    initialImages.map((dataUrl, index) => ({
+    (initialProduct?.images ?? []).map((dataUrl, index) => ({
       id: `existing-${index}`,
       name: `Product image ${index + 1}`,
       dataUrl,
+      storagePath: initialImagePaths[index],
     })),
   );
-  const [colors, setColors] = useState<ProductColor[]>(initialColors);
+  const [colors, setColors] = useState<ProductColor[]>(
+    initialProduct?.colors.map(({ name: color, hex }) => ({ name: color, hex })) ?? [],
+  );
   const [colorName, setColorName] = useState("");
   const [colorHex, setColorHex] = useState("#c9b89b");
-  const [sizes, setSizes] = useState<string[]>([
-    ...new Set(initialVariants.map((variant) => variant.size)),
-  ]);
+  const [sizes, setSizes] = useState<string[]>([...new Set(initialVariants.map((variant) => variant.size))]);
   const [customSize, setCustomSize] = useState("");
   const [stockByVariant, setStockByVariant] = useState<Record<string, string>>(
-    Object.fromEntries(
-      initialVariants.map((variant) => [
-        `${variant.color}::${variant.size}`,
-        String(variant.stock),
-      ]),
-    ),
+    Object.fromEntries(initialVariants.map((variant) => [
+      `${variant.color}::${variant.size}`,
+      String(variant.stock),
+    ])),
   );
-  const [originalPrice, setOriginalPrice] = useState(
-    initialProduct ? String(initialProduct.originalPrice) : "",
-  );
-  const [discountPercent, setDiscountPercent] = useState(
-    initialProduct ? String(initialProduct.discountPercent) : "0",
-  );
-  const [lowStockThreshold, setLowStockThreshold] = useState(
-    initialProduct ? String(initialProduct.lowStockThreshold ?? 5) : "5",
-  );
-  const [status, setStatus] = useState<"draft" | "published">(
-    initialProduct?.status ?? "draft",
-  );
+  const [originalPrice, setOriginalPrice] = useState(initialProduct ? String(initialProduct.oldPrice) : "");
+  const [discountPercent, setDiscountPercent] = useState(String(initialProduct?.discountPercent ?? 0));
+  const [lowStockThreshold, setLowStockThreshold] = useState(String(initialProduct?.lowStockThreshold ?? 5));
+  const [status, setStatus] = useState<"draft" | "published">(initialProduct?.status ?? "draft");
   const [featured, setFeatured] = useState(Boolean(initialProduct?.featured));
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
-  const productLoadError = initialData.productLoadError;
-
-  const categoryPath = (id: string, visited = new Set<string>()): string => {
-    if (visited.has(id)) return "";
-    const category = categories.find((item) => item.id === id);
-    if (!category) return "";
-    visited.add(id);
-
-    if (!category.parentId) return category.name;
-    const parentPath = categoryPath(category.parentId, visited);
-    return parentPath ? `${parentPath} → ${category.name}` : category.name;
-  };
+  const categories: Category[] = catalogue.categories;
 
   const hasActiveAncestors = (
     category: Category,
@@ -359,7 +230,7 @@ export default function AddProduct() {
     }
   }
 
-  function saveProduct(
+  async function saveProduct(
     event: React.FormEvent<HTMLFormElement>,
   ) {
     event.preventDefault();
@@ -411,72 +282,31 @@ export default function AddProduct() {
 
     setSaving(true);
     try {
-      const existingValue = localStorage.getItem(PRODUCT_STORAGE_KEY);
-      const existing: unknown = existingValue ? JSON.parse(existingValue) : [];
-      if (!Array.isArray(existing)) {
-        throw new Error("Saved products have an invalid format. No changes were saved.");
-      }
-      const editingProduct = productId
-        ? existing.find((product: { id?: string }) => product.id === productId)
-        : undefined;
-      if (productId && !editingProduct) {
-        throw new Error("This product no longer exists. No changes were saved.");
-      }
-      if (
-        existing.some(
-          (product: { id?: string; sku?: string }) =>
-            product.id !== productId &&
-            product.sku?.trim().toLowerCase() === normalizedSku.toLowerCase(),
-        )
-      ) {
-        setError("A product with this SKU already exists.");
-        setSaving(false);
-        return;
-      }
-
-      const product: StoredProduct = {
-        id:
-          editingProduct?.id ??
-          createProductId(),
-        name: name.trim(),
+      await saveAdminProduct({
+        id: productId,
         sku: normalizedSku,
+        name: name.trim(),
         description: description.trim(),
         categoryId: selectedCategory.id,
-        categoryPath: categoryPath(selectedCategory.id),
-        image: images[0].dataUrl,
-        images: images.map((image) => image.dataUrl),
-        colors,
         originalPrice: price,
         discountPercent: discount,
-        sellingPrice,
-        sizes: variants,
         lowStockThreshold: parsedThreshold,
-        stockStatus:
-          totalStock === 0 ? "out" : totalStock <= parsedThreshold ? "low" : "in",
         status,
         featured,
-        createdAt: editingProduct?.createdAt ?? new Date().toISOString(),
-      };
-
-      localStorage.setItem(
-        PRODUCT_STORAGE_KEY,
-        JSON.stringify(
-          editingProduct
-            ? existing.map((item) =>
-                item.id === productId ? product : item,
-              )
-            : [...existing, product],
-        ),
-      );
-      notifyAdminProductsChanged();
+        colors,
+        variants,
+        images: images.map((image) => ({
+          name: image.name,
+          dataUrl: image.storagePath ? undefined : image.dataUrl,
+          storagePath: image.storagePath,
+        })),
+      });
       navigate("/admin/products");
     } catch (saveError) {
       setError(
-        saveError instanceof DOMException && saveError.name === "QuotaExceededError"
-          ? "Browser storage is full. Reduce the image sizes and try again. Images are stored locally only, not uploaded to cloud storage."
-          : saveError instanceof Error
-            ? saveError.message
-            : "Unable to save the product. Please try again.",
+        saveError instanceof Error
+          ? saveError.message
+          : "Unable to save the product. Please try again.",
       );
       setSaving(false);
     }
@@ -495,14 +325,11 @@ export default function AddProduct() {
         </div>
       </header>
 
-      {productLoadError && (
-        <p className="admin-add-product-error" role="alert">{productLoadError}</p>
-      )}
-      {categoryLoadError && (
-        <p className="admin-add-product-error" role="alert">{categoryLoadError}</p>
+      {!catalogue.error && catalogue.imageError && (
+        <p className="admin-add-product-error" role="alert">{catalogue.imageError}</p>
       )}
 
-      {!productLoadError && <form className="admin-add-product-form" onSubmit={saveProduct}>
+      <form className="admin-add-product-form" onSubmit={saveProduct}>
         <section className="admin-add-product-section">
           <h2>Product Information</h2>
           <div className="admin-add-product-fields">
@@ -553,7 +380,7 @@ export default function AddProduct() {
               </select>
             </label>
           </div>
-          {categoryOptions.length === 0 && !categoryLoadError && (
+          {categoryOptions.length === 0 && (
             <p className="admin-add-product-hint">
               No categories are available. Create one in Category Management first.
             </p>
@@ -565,7 +392,7 @@ export default function AddProduct() {
           <label className="admin-add-product-upload">
             <ImagePlus size={22} />
             <span>Choose one or more product images *</span>
-            <small>Previews are local to this browser and are not uploaded to cloud storage.</small>
+            <small>Images are uploaded to the private Supabase product image bucket.</small>
             <input
               type="file"
               accept="image/*"
@@ -811,10 +638,6 @@ export default function AddProduct() {
 
         {error && <p className="admin-add-product-error" role="alert">{error}</p>}
 
-        <p className="admin-add-product-hint">
-          Product images and catalogue data are saved in this browser only. Images are not uploaded to permanent cloud storage.
-        </p>
-
         <div className="admin-add-product-footer">
           <Link to="/admin/products">Cancel</Link>
           <button type="submit" className="admin-add-product-action" disabled={saving}>
@@ -822,7 +645,7 @@ export default function AddProduct() {
             {saving ? "Saving..." : productId ? "Save Changes" : "Save Product"}
           </button>
         </div>
-      </form>}
+      </form>
     </main>
   );
 }

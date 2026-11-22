@@ -13,8 +13,8 @@ import {
   categoryPathSegments,
   categorySlug,
   productSearchScore,
-  usePublishedAdminProducts,
 } from "../data/adminProductCatalog";
+import { useSupabaseCatalogue } from "../data/supabaseCatalogue";
 import type { Product } from "../data/products";
 
 const money = (amount: number) =>
@@ -45,7 +45,7 @@ function categoryFilterOptions(products: Product[]) {
 }
 
 export default function Products() {
-  const products = usePublishedAdminProducts();
+  const { products, loading, error, imageError } = useSupabaseCatalogue();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -295,6 +295,9 @@ export default function Products() {
           </select>
         </label>
       </div>
+      {error && <p className="catalogue-error" role="alert">{error}</p>}
+      {!error && imageError && <p className="catalogue-error" role="alert">{imageError}</p>}
+      {loading && <p className="catalogue-status">Loading published products…</p>}
 
       {activeFilters.length > 0 && (
         <div className="listing-active-filters" aria-label="Active filters">
@@ -495,13 +498,13 @@ export default function Products() {
                 );
               })}
             </div>
-          ) : (
+          ) : !loading && !error ? (
             <div className="listing-empty">
               <h2>No products found</h2>
               <p>Try changing your search or filters to see more published products.</p>
               <button className="gold-button" onClick={clearFilters}>Clear Filters</button>
             </div>
-          )}
+          ) : null}
         </section>
       </div>
     </main>

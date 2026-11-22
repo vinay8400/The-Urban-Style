@@ -8,10 +8,9 @@ import {
   Trash2,
 } from "lucide-react";
 import {
-  getPublishedAdminProducts,
   getVariantStock,
-  usePublishedAdminProducts,
 } from "../data/adminProductCatalog";
+import { useSupabaseCatalogue } from "../data/supabaseCatalogue";
 
 interface CartItem {
   productId: string;
@@ -55,7 +54,7 @@ function loadStoredCart(): CartItem[] {
 
 export default function Cart() {
   const navigate = useNavigate();
-  const products = usePublishedAdminProducts();
+  const { products, loading: catalogueLoading, error: catalogueError, imageError } = useSupabaseCatalogue();
   const [items, setItems] = useState<CartItem[]>(loadStoredCart);
   const [storageError, setStorageError] = useState("");
   const [checkoutError, setCheckoutError] = useState("");
@@ -115,7 +114,7 @@ export default function Cart() {
     if (nextQuantity < 1) return;
     if (change > 0) {
       const currentItem = updated[index];
-      const latestProduct = getPublishedAdminProducts().find(
+      const latestProduct = products.find(
         (product) => product.id === currentItem.productId,
       );
       const available = latestProduct
@@ -219,6 +218,9 @@ export default function Cart() {
           {checkoutError && (
             <p className="cart-storage-error" role="alert">{checkoutError}</p>
           )}
+          {catalogueError && <p className="catalogue-error" role="alert">{catalogueError}</p>}
+          {!catalogueError && imageError && <p className="catalogue-error" role="alert">{imageError}</p>}
+          {catalogueLoading && <p className="catalogue-status">Checking current product availability…</p>}
 
           {items.map((item, index) => {
             const itemId = getItemId(item);

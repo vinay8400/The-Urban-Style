@@ -13,8 +13,8 @@ import { useAuth } from "../../auth/AuthContext";
 import {
   categoryPathSegments,
   searchPublishedProducts,
-  usePublishedAdminProducts,
 } from "../../data/adminProductCatalog";
+import { useSupabaseCatalogue } from "../../data/supabaseCatalogue";
 
 const RECENT_SEARCHES_KEY = "urban-style-recent-searches";
 
@@ -43,7 +43,7 @@ const navigation = [
 export default function Header() {
   const navigate = useNavigate();
   const { user, isAdmin, signOut } = useAuth();
-  const products = usePublishedAdminProducts();
+  const { products, error: catalogueError } = useSupabaseCatalogue();
   const [menuOpen, setMenuOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -215,7 +215,11 @@ export default function Header() {
         </div>
         {searchOpen && (
           <div className="global-search-suggestions" id="global-search-suggestions">
-            {debouncedSearch ? (
+            {catalogueError ? (
+              <p className="search-suggestions-empty" role="alert">
+                Product search is temporarily unavailable.
+              </p>
+            ) : debouncedSearch ? (
               matchingProducts.length > 0 ? (
                 <>
                   <span className="search-suggestions-heading">Products</span>

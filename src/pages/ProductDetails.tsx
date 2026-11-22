@@ -15,10 +15,9 @@ import {
   Check,
 } from "lucide-react";
 import {
-  getPublishedAdminProducts,
   getVariantStock,
-  usePublishedAdminProducts,
 } from "../data/adminProductCatalog";
+import { useSupabaseCatalogue } from "../data/supabaseCatalogue";
 
 interface CartItem {
   productId: string;
@@ -49,7 +48,7 @@ const money = (amount: number) =>
 export default function ProductDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const products = usePublishedAdminProducts();
+  const { products, loading: catalogueLoading, error: catalogueError, imageError } = useSupabaseCatalogue();
   const product = products.find((item) => item.id === id);
 
   const [selectedImage, setSelectedImage] = useState(0);
@@ -63,11 +62,14 @@ export default function ProductDetails() {
   const [wishlisted, setWishlisted] = useState(false);
   const [message, setMessage] = useState("");
 
+  if (catalogueLoading) {
+    return <main className="product-not-found"><p>Loading product…</p></main>;
+  }
   if (!product) {
     return (
       <main className="product-not-found">
         <h1>Product not found</h1>
-        <p>This product may have been removed or is unavailable.</p>
+        <p>{catalogueError || "This product may have been removed or is unavailable."}</p>
         <Link to="/category/men" className="detail-primary-button">
           Browse Products
         </Link>
@@ -139,7 +141,7 @@ export default function ProductDetails() {
         };
         localStorage.setItem(CHECKOUT_INTENT_KEY, JSON.stringify(intent));
       } else {
-        const latestProduct = getPublishedAdminProducts().find(
+        const latestProduct = products.find(
           (item) => item.id === productRecord.id,
         );
         if (!latestProduct) {
@@ -214,6 +216,8 @@ export default function ProductDetails() {
 
   return (
     <main className="product-detail-page">
+      {catalogueError && <p className="catalogue-error" role="alert">{catalogueError}</p>}
+      {!catalogueError && imageError && <p className="catalogue-error" role="alert">{imageError}</p>}
       <div className="detail-breadcrumb">
         <Link to="/">Home</Link>
         <ChevronRight size={13} />
