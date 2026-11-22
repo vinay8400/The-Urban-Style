@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, useLocation } from "react-router-dom";
 import {
   LayoutDashboard,
   Package,
@@ -19,25 +19,15 @@ import {
   CheckCircle2,
   AlertTriangle,
 } from "lucide-react";
-
-interface StoredOrder {
-  orderId: string;
-  createdAt: string;
-  customer?: {
-    name?: string;
-    phone?: string;
-  };
-  items?: {
-    name: string;
-    quantity: number;
-  }[];
-  total?: number;
-  orderStatus?: string;
-  payment?: {
-    status?: string;
-    method?: string;
-  };
-}
+import { useAuth } from "../../auth/AuthContext";
+import {
+  advanceStoreOrder,
+  cancelStoreOrder,
+  fetchAdminOrders,
+  fulfillStoreOrder,
+  verifyStorePayment,
+  type StoreOrder,
+} from "../../data/supabaseOrders";
 
 const formatCurrency = (amount: number) =>
   new Intl.NumberFormat("en-IN", {
@@ -47,51 +37,82 @@ const formatCurrency = (amount: number) =>
   }).format(amount);
 
 export default function AdminDashboard() {
-  const orders = useMemo<StoredOrder[]>(() => {
-    try {
-      const saved = JSON.parse(
-        localStorage.getItem("urban-style-orders") || "[]",
-      );
-      return Array.isArray(saved) ? saved : [];
-    } catch {
-      return [];
-    }
+  const { user } = useAuth();
+  const location = useLocation();
+  const [orders, setOrders] = useState<StoreOrder[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [ordersError, setOrdersError] = useState("");
+  const [orderActionId, setOrderActionId] = useState<string | null>(null);
+  const showAllOrders = location.pathname === "/admin/orders";
+
+  useEffect(() => {
+    let active = true;
+    void fetchAdminOrders()
+      .then((loadedOrders) => {
+        if (active) setOrders(loadedOrders);
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setOrders([]);
+        setOrdersError(error instanceof Error ? error.message : "Unable to load store orders.");
+      })
+      .finally(() => {
+        if (active) setOrdersLoading(false);
+      });
+    return () => { active = false; };
   }, []);
+
+  async function handleOrderAction(order: StoreOrder, action: string) {
+    setOrderActionId(order.id);
+    setOrdersError("");
+    try {
+      if (action === "verify") {
+        if (!user) throw new Error("Your admin session is unavailable.");
+        await verifyStorePayment(order.id, user.id);
+      } else if (action === "cancel") {
+        await cancelStoreOrder(order.id);
+      } else if (action === "fulfill") {
+        await fulfillStoreOrder(order.id);
+      } else {
+        await advanceStoreOrder(order.id, action);
+      }
+      setOrders(await fetchAdminOrders());
+    } catch (error) {
+      setOrdersError(error instanceof Error ? error.message : "Unable to update this order.");
+    } finally {
+      setOrderActionId(null);
+    }
+  }
 
   const totalOrders = orders.length;
 
   const totalSales = orders.reduce(
-    (sum, order) => sum + (Number(order.total) || 0),
+    (sum, order) => sum + order.total,
     0,
   );
 
   const pendingOrders = orders.filter(
-    (order) => order.orderStatus === "pending_confirmation",
+    (order) => order.order_status === "pending_confirmation",
   ).length;
 
   const pendingPayments = orders.filter(
-    (order) => order.payment?.status === "pending_verification",
+    (order) => order.payments.some((payment) => payment.status === "pending_verification"),
   ).length;
 
-  const recentOrders = [...orders]
-    .sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    )
-    .slice(0, 5);
+  const displayedOrders = showAllOrders ? orders : orders.slice(0, 5);
 
   const stats = [
     {
       label: "Total Orders",
       value: totalOrders.toString(),
       icon: ShoppingBag,
-      note: "Orders recorded in this browser",
+      note: "Orders stored in Supabase",
     },
     {
       label: "Order Value",
       value: formatCurrency(totalSales),
       icon: IndianRupee,
-      note: "Demo order value, not verified revenue",
+      note: "Total order value",
     },
     {
       label: "Pending Orders",
@@ -270,47 +291,112 @@ export default function AdminDashboard() {
         <section className="admin-section">
           <div className="admin-section-heading">
             <div>
-              <span>RECENT ACTIVITY</span>
-              <h2>Recent Orders</h2>
+              <span>{showAllOrders ? "ORDER MANAGEMENT" : "RECENT ACTIVITY"}</span>
+              <h2>{showAllOrders ? "Store Orders" : "Recent Orders"}</h2>
             </div>
-            <Link to="/admin/orders">View all orders →</Link>
+            {!showAllOrders && <Link to="/admin/orders">View all orders →</Link>}
           </div>
 
           <div className="admin-orders-card">
-            {recentOrders.length === 0 ? (
+            {ordersError && <p className="admin-add-product-error" role="alert">{ordersError}</p>}
+            {ordersLoading ? (
+              <p role="status">Loading orders from Supabase…</p>
+            ) : displayedOrders.length === 0 ? (
               <div className="admin-empty-state">
                 <ShoppingBag size={32} />
                 <strong>No orders yet</strong>
-                <p>Customer orders will appear here.</p>
+                <p>Orders placed by signed-in customers will appear here.</p>
               </div>
             ) : (
               <div className="admin-table-wrapper">
                 <table className="admin-orders-table">
                   <thead>
                     <tr>
-                      <th>Order ID</th>
-                      <th>Customer</th>
+                      <th>Order</th>
+                      <th>Customer / Items</th>
+                      <th>Delivery</th>
+                      <th>Payment</th>
                       <th>Date</th>
                       <th>Amount</th>
                       <th>Status</th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {recentOrders.map((order) => (
-                      <tr key={order.orderId}>
-                        <td>{order.orderId}</td>
-                        <td>{order.customer?.name || "Customer"}</td>
+                    {displayedOrders.map((order) => {
+                      const payment = order.payments[0];
+                      const nextStatus: Record<string, string> = {
+                        pending_confirmation: "confirmed",
+                        confirmed: "preparing",
+                        preparing: "dispatched",
+                      };
+                      const working = orderActionId === order.id;
+                      return (
+                      <tr key={order.id}>
                         <td>
-                          {new Date(order.createdAt).toLocaleDateString("en-IN")}
+                          <strong>{order.order_number}</strong>
+                          <small>{order.order_status.replaceAll("_", " ")}</small>
                         </td>
-                        <td>{formatCurrency(Number(order.total) || 0)}</td>
+                        <td>
+                          <strong>{order.customer_name_snapshot}</strong>
+                          <small>{order.customer_phone_snapshot}</small>
+                          <details>
+                            <summary>{order.items.length} item(s)</summary>
+                            {order.items.map((item) => (
+                              <small key={item.id}>
+                                {item.product_name_snapshot} · {item.color_snapshot} · {item.size_snapshot}
+                                {" × "}{item.quantity} · {formatCurrency(item.line_total)}
+                              </small>
+                            ))}
+                          </details>
+                        </td>
+                        <td>
+                          <strong>{order.fulfillment_method === "pickup" ? "Store pickup" : "Delivery"}</strong>
+                          {order.fulfillment_method === "delivery" && (
+                            <small>
+                              {order.address_line_snapshot}, {order.city_snapshot} {order.postal_code_snapshot}
+                              {" · "}{order.delivery_radius_status.replaceAll("_", " ")}
+                            </small>
+                          )}
+                        </td>
+                        <td>
+                          <strong>{order.payment_method.toUpperCase()}</strong>
+                          <small>{payment?.status.replaceAll("_", " ") ?? "No payment record"}</small>
+                          {payment?.upi_reference && <small>UTR: {payment.upi_reference}</small>}
+                        </td>
+                        <td>
+                          {new Date(order.created_at).toLocaleDateString("en-IN")}
+                        </td>
+                        <td>{formatCurrency(order.total)}</td>
                         <td>
                           <span className="admin-order-status">
-                            {order.orderStatus?.replaceAll("_", " ") || "Unknown"}
+                            {order.order_status.replaceAll("_", " ")}
                           </span>
                         </td>
+                        <td>
+                          {payment?.method === "upi" && payment.status === "pending_verification" && (
+                            <button type="button" disabled={working} onClick={() => void handleOrderAction(order, "verify")}>
+                              Verify UPI
+                            </button>
+                          )}
+                          {nextStatus[order.order_status] && (
+                            <button type="button" disabled={working} onClick={() => void handleOrderAction(order, nextStatus[order.order_status])}>
+                              {nextStatus[order.order_status]}
+                            </button>
+                          )}
+                          {order.order_status === "dispatched" && (
+                            <button type="button" disabled={working} onClick={() => void handleOrderAction(order, "fulfill")}>
+                              Fulfil
+                            </button>
+                          )}
+                          {!["cancelled", "fulfilled"].includes(order.order_status) && (
+                            <button type="button" disabled={working} onClick={() => void handleOrderAction(order, "cancel")}>
+                              Cancel
+                            </button>
+                          )}
+                        </td>
                       </tr>
-                    ))}
+                    );})}
                   </tbody>
                 </table>
               </div>

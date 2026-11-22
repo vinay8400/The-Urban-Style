@@ -1,5 +1,5 @@
-import { Link, useSearchParams } from "react-router-dom";
-import { useMemo } from "react";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
+import { useEffect, useState } from "react";
 import {
   CheckCircle2,
   Package,
@@ -8,38 +8,8 @@ import {
   Clock3,
   ShoppingBag,
 } from "lucide-react";
-
-interface SavedOrder {
-  orderId: string;
-  createdAt: string;
-  customer: {
-    name: string;
-    phone: string;
-  };
-  fulfilment: {
-    method: "delivery" | "pickup";
-    address: string;
-    city: string;
-    pincode: string;
-    deliveryRadiusStatus: string;
-  };
-  payment: {
-    method: string;
-    status: string;
-  };
-  items: {
-    productId: string;
-    name: string;
-    price: number;
-    image: string;
-    size: string;
-    color: string;
-    quantity: number;
-  }[];
-  subtotal: number;
-  total: number;
-  orderStatus: string;
-}
+import { useAuth } from "../auth/AuthContext";
+import { fetchCustomerOrder, type StoreOrder } from "../data/supabaseOrders";
 
 const money = (amount: number) =>
   new Intl.NumberFormat("en-IN", {
@@ -51,114 +21,118 @@ const money = (amount: number) =>
 export default function OrderSuccess() {
   const [searchParams] = useSearchParams();
   const orderId = searchParams.get("orderId");
+  const { user, loading: authLoading } = useAuth();
+  const [order, setOrder] = useState<StoreOrder | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
 
-  const order = useMemo<SavedOrder | null>(() => {
-    if (!orderId) return null;
+  useEffect(() => {
+    let active = true;
+    if (!user || !orderId) return () => { active = false; };
+    void fetchCustomerOrder(orderId)
+      .then((result) => {
+        if (active) setOrder(result);
+      })
+      .catch((loadError: unknown) => {
+        if (active) {
+          setError(loadError instanceof Error ? loadError.message : "Unable to load order details.");
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [orderId, user]);
 
-    try {
-      const saved = JSON.parse(
-        localStorage.getItem("urban-style-orders") || "[]",
-      );
-
-      if (!Array.isArray(saved)) return null;
-
-      return saved.find((item: SavedOrder) => item.orderId === orderId) ?? null;
-    } catch {
-      return null;
-    }
-  }, [orderId]);
-
-  if (!order) {
+  if (authLoading) {
+    return <main className="order-success-page" role="status">Loading your order…</main>;
+  }
+  if (!user) {
+    const destination = `/order/success?orderId=${encodeURIComponent(orderId ?? "")}`;
+    return <Navigate to={`/login?next=${encodeURIComponent(destination)}`} replace />;
+  }
+  if (!orderId) {
     return (
       <main className="order-success-page">
         <div className="order-success-card">
           <Package size={42} />
           <h1>Order Details Unavailable</h1>
-          <p>
-            We could not find this order in this browser. Please contact the
-            store if you need help.
-          </p>
-          <Link to="/" className="order-success-primary">
-            Back to Home
-          </Link>
+          <p>No order reference was provided.</p>
+          <Link to="/" className="order-success-primary">Back to Home</Link>
+        </div>
+      </main>
+    );
+  }
+  if (loading) {
+    return <main className="order-success-page" role="status">Loading your order…</main>;
+  }
+  if (error || !order) {
+    return (
+      <main className="order-success-page">
+        <div className="order-success-card">
+          <Package size={42} />
+          <h1>Order Details Unavailable</h1>
+          <p>{error || "This order is unavailable to your account. Please contact the store if you need help."}</p>
+          <Link to="/" className="order-success-primary">Back to Home</Link>
         </div>
       </main>
     );
   }
 
-  const isPickup = order.fulfilment.method === "pickup";
+  const isPickup = order.fulfillment_method === "pickup";
+  const payment = order.payments[0];
 
   return (
     <main className="order-success-page">
       <section className="order-success-card">
-        <div className="order-success-icon">
-          <CheckCircle2 size={43} />
-        </div>
-
+        <div className="order-success-icon"><CheckCircle2 size={43} /></div>
         <span className="order-success-eyebrow">THE URBAN STYLE</span>
         <h1>Order Received!</h1>
         <p className="order-success-intro">
-          Thank you, {order.customer.name}. Your order has been recorded.
+          Thank you, {order.customer_name_snapshot}. Your order has been recorded.
           The store will contact you to confirm it.
         </p>
 
         <div className="order-success-id">
           <span>YOUR ORDER ID</span>
-          <strong>{order.orderId}</strong>
-          <small>
-            Save this ID to refer to your order.
-          </small>
+          <strong>{order.order_number}</strong>
+          <small>Save this ID to refer to your order.</small>
         </div>
 
         <div className="order-success-status">
           <Clock3 size={19} />
           <div>
-            <strong>Awaiting store confirmation</strong>
-            <p>
-              Your order is not yet confirmed. The store will verify
-              availability and contact you.
-            </p>
+            <strong>{order.order_status.replaceAll("_", " ")}</strong>
+            <p>The store will contact you with updates about your order.</p>
           </div>
         </div>
 
         <div className="order-success-details">
           <h2>Order Information</h2>
-
           <div className="order-success-row">
-            <span>Customer</span>
-            <strong>{order.customer.name}</strong>
+            <span>Customer</span><strong>{order.customer_name_snapshot}</strong>
           </div>
-
           <div className="order-success-row">
-            <span>Mobile</span>
-            <strong>{order.customer.phone}</strong>
+            <span>Mobile</span><strong>{order.customer_phone_snapshot}</strong>
           </div>
-
           <div className="order-success-row">
             <span>Order Date</span>
-            <strong>
-              {new Date(order.createdAt).toLocaleDateString("en-IN")}
-            </strong>
+            <strong>{new Date(order.created_at).toLocaleDateString("en-IN")}</strong>
           </div>
-
           <div className="order-success-row">
             <span>Payment Method</span>
             <strong>
-              {order.payment.method === "cod"
+              {order.payment_method === "cod"
                 ? "Cash on Delivery"
-                : order.payment.method === "upi"
-                  ? "UPI"
-                  : "Pay at Store"}
+                : order.payment_method === "upi" ? "UPI" : "Pay at Store"}
             </strong>
           </div>
-
           <div className="order-success-row">
             <span>Payment Status</span>
             <strong className="order-success-pending">
-              Pending verification
+              {payment?.status.replaceAll("_", " ") ?? "Pending"}
             </strong>
           </div>
-
           <div className="order-success-row">
             <span>Fulfilment</span>
             <strong>{isPickup ? "Store Pickup" : "Local Delivery"}</strong>
@@ -166,29 +140,22 @@ export default function OrderSuccess() {
 
           {!isPickup && (
             <div className="order-success-address">
-              <MapPinFallback />
+              <Truck size={19} />
               <div>
                 <strong>Delivery Address</strong>
                 <p>
-                  {order.fulfilment.address}, {order.fulfilment.city} -{" "}
-                  {order.fulfilment.pincode}
+                  {order.address_line_snapshot}, {order.city_snapshot} - {order.postal_code_snapshot}
                 </p>
-                <small>
-                  10 km delivery eligibility is pending store verification.
-                </small>
+                <small>Delivery status: {order.delivery_radius_status.replaceAll("_", " ")}</small>
               </div>
             </div>
           )}
-
           {isPickup && (
             <div className="order-success-address">
               <Store size={19} />
               <div>
                 <strong>Store Pickup</strong>
-                <p>
-                  Behind RPS Inter College, Itaunja, Lucknow,
-                  Uttar Pradesh – 226203.
-                </p>
+                <p>Behind RPS Inter College, Itaunja, Lucknow, Uttar Pradesh – 226203.</p>
                 <small>Wait for store confirmation before visiting.</small>
               </div>
             </div>
@@ -197,30 +164,28 @@ export default function OrderSuccess() {
 
         <div className="order-success-details">
           <h2>Items Ordered</h2>
-
-          {order.items.map((item, index) => (
-            <div
-              className="order-success-product"
-              key={`${item.productId}-${item.size}-${item.color}-${index}`}
-            >
-              <img src={item.image} alt={item.name} />
+          {order.items.map((item) => (
+            <div className="order-success-product" key={item.id}>
               <div>
-                <strong>{item.name}</strong>
-                <small>{item.color} · Size {item.size}</small>
+                <strong>{item.product_name_snapshot}</strong>
+                <small>SKU: {item.sku_snapshot}</small>
+                <small>{item.color_snapshot} · Size {item.size_snapshot}</small>
                 <small>Quantity: {item.quantity}</small>
               </div>
-              <b>{money(item.price * item.quantity)}</b>
+              <b>{money(item.line_total)}</b>
             </div>
           ))}
-
           <div className="order-success-total">
-            <span>Product Subtotal</span>
-            <strong>{money(order.subtotal)}</strong>
+            <span>Product Subtotal</span><strong>{money(order.subtotal)}</strong>
           </div>
-
+          <div className="order-success-total">
+            <span>Delivery charge</span><strong>{money(order.delivery_charge)}</strong>
+          </div>
+          <div className="order-success-total">
+            <span>Total</span><strong>{money(order.total)}</strong>
+          </div>
           <p className="order-success-note">
-            Final delivery charges, availability and payment status will be
-            confirmed by the store.
+            Payment status and delivery eligibility are managed by the store.
           </p>
         </div>
 
@@ -228,23 +193,13 @@ export default function OrderSuccess() {
           <Link to="/category/men" className="order-success-primary">
             <ShoppingBag size={16} /> Continue Shopping
           </Link>
-
-          <Link to="/" className="order-success-secondary">
-            Back to Home
-          </Link>
+          <Link to="/" className="order-success-secondary">Back to Home</Link>
         </div>
-
         <div className="order-success-help">
           <Truck size={17} />
-          <span>
-            Need help? Contact the store at 8090365996.
-          </span>
+          <span>Need help? Contact the store at 8090365996.</span>
         </div>
       </section>
     </main>
   );
-}
-
-function MapPinFallback() {
-  return <Truck size={19} />;
 }

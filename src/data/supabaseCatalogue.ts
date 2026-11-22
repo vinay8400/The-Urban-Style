@@ -185,6 +185,7 @@ export async function fetchCatalogue(admin = false): Promise<CatalogueResult> {
       .filter(Boolean);
     const normalizedVariants = normalizeVariantStock(
       productVariants.map((variant) => ({
+        id: variant.id,
         size: variant.size,
         color:
           productColors.find((color) => color.id === variant.color_id)?.name ?? "",
@@ -422,7 +423,24 @@ export async function setProductStatus(id: string, status: "published" | "draft"
   notifySupabaseCatalogueChanged();
 }
 
-export async function deleteAdminProduct(id: string) {
+export async function deleteAdminProduct(id: string): Promise<{ archived: boolean }> {
+  const { count, error: orderItemsError } = await supabase
+    .from("order_items")
+    .select("id", { count: "exact", head: true })
+    .eq("product_id", id);
+  if (orderItemsError) {
+    throw new Error(failureMessage(orderItemsError, "check product order history"));
+  }
+  if ((count ?? 0) > 0) {
+    const { error: archiveError } = await supabase
+      .from("products")
+      .update({ status: "draft" })
+      .eq("id", id);
+    if (archiveError) throw new Error(failureMessage(archiveError, "unpublish product with order history"));
+    notifySupabaseCatalogueChanged();
+    return { archived: true };
+  }
+
   const { data: images, error: imageError } = await supabase
     .from("product_images")
     .select("storage_path")
@@ -436,6 +454,7 @@ export async function deleteAdminProduct(id: string) {
     if (storageError) throw new Error(failureMessage(storageError, "delete product images"));
   }
   notifySupabaseCatalogueChanged();
+  return { archived: false };
 }
 
 export async function saveCategory(input: {

@@ -101,6 +101,7 @@ export default function AdminProducts() {
   const [stockFilter, setStockFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
   const [actionError, setActionError] = useState("");
+  const [actionNotice, setActionNotice] = useState("");
 
   const filteredProducts = useMemo(() => {
     return products.filter((product) => {
@@ -142,14 +143,18 @@ export default function AdminProducts() {
 
   const deleteProduct = async (product: AdminProduct) => {
     const confirmed = window.confirm(
-      `Delete "${product.name}"? This action cannot be undone.`,
+      `Delete "${product.name}"? Products with order history will be unpublished to preserve those records.`,
     );
 
     if (!confirmed) return;
 
     setActionError("");
+    setActionNotice("");
     try {
-      await deleteAdminProduct(product.id);
+      const result = await deleteAdminProduct(product.id);
+      if (result.archived) {
+        setActionNotice("Product has existing orders, so it was unpublished instead of deleted.");
+      }
     } catch (error) {
       setActionError(error instanceof Error ? error.message : "Unable to delete product.");
     }
@@ -235,6 +240,9 @@ export default function AdminProducts() {
           <p className="admin-add-product-error" role="alert">
             {actionError || catalogueError}
           </p>
+        )}
+        {actionNotice && (
+          <p className="admin-add-product-hint" role="status">{actionNotice}</p>
         )}
         {loading && <p className="admin-add-product-hint">Loading products from Supabase…</p>}
         <div className="admin-product-toolbar">

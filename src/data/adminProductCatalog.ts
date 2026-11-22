@@ -50,6 +50,7 @@ export function normalizeVariantStock(
     const key = JSON.stringify([value.size, color]);
     const current = stockByVariant.get(key);
     stockByVariant.set(key, {
+      id: typeof value.id === "string" ? value.id : current?.id,
       size: value.size,
       color,
       stock: (current?.stock ?? 0) + stock,

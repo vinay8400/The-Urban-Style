@@ -6,7 +6,7 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, Navigate, useNavigate } from "react-router-dom";
 import {
   MapPin,
   Truck,
@@ -19,6 +19,8 @@ import {
   getVariantStock,
 } from "../data/adminProductCatalog";
 import { fetchCatalogue } from "../data/supabaseCatalogue";
+import { supabase } from "../lib/supabase";
+import { useAuth } from "../auth/AuthContext";
 
 interface CartItem {
   productId: string;
@@ -35,7 +37,6 @@ type FulfilmentMethod = "delivery" | "pickup";
 type PaymentMethod = "cod" | "upi" | "store";
 
 const CART_KEY = "urban-style-cart";
-const ORDERS_KEY = "urban-style-orders";
 const CHECKOUT_INTENT_KEY = "urban-style-checkout-intent";
 const CHECKOUT_INTENT_MAX_AGE = 30 * 60 * 1000;
 
@@ -45,18 +46,20 @@ interface CheckoutIntent {
   mode: CheckoutMode;
   items: CartItem[];
   createdAt: number;
+  idempotencyKey?: string;
 }
 
 interface CheckoutSnapshot {
   mode: CheckoutMode | null;
   items: CartItem[];
   valid: boolean;
+  idempotencyKey: string | null;
 }
 
 function readCheckoutSnapshot(): CheckoutSnapshot {
   try {
     const saved = localStorage.getItem(CHECKOUT_INTENT_KEY);
-    if (!saved) return { mode: null, items: [], valid: false };
+    if (!saved) return { mode: null, items: [], valid: false, idempotencyKey: null };
 
     const intent: CheckoutIntent = JSON.parse(saved);
     const valid =
@@ -67,12 +70,23 @@ function readCheckoutSnapshot(): CheckoutSnapshot {
       Date.now() >= intent.createdAt &&
       Date.now() - intent.createdAt <= CHECKOUT_INTENT_MAX_AGE;
 
-    return valid
-      ? { mode: intent.mode, items: intent.items, valid: true }
-      : { mode: null, items: [], valid: false };
+    if (!valid) return { mode: null, items: [], valid: false, idempotencyKey: null };
+
+    const idempotencyKey = intent.idempotencyKey ?? crypto.randomUUID();
+    if (!intent.idempotencyKey) {
+      try {
+        localStorage.setItem(
+          CHECKOUT_INTENT_KEY,
+          JSON.stringify({ ...intent, idempotencyKey }),
+        );
+      } catch (saveError) {
+        console.error("Unable to persist the checkout retry key.", saveError);
+      }
+    }
+    return { mode: intent.mode, items: intent.items, valid: true, idempotencyKey };
   } catch (loadError) {
     console.error("Unable to load checkout intent.", loadError);
-    return { mode: null, items: [], valid: false };
+    return { mode: null, items: [], valid: false, idempotencyKey: null };
   }
 }
 
@@ -80,7 +94,7 @@ function getCartItemId(item: CartItem) {
   return JSON.stringify([item.productId, item.size, item.color]);
 }
 
-interface RequiredVariantStock {
+interface RequiredVariant {
   productId: string;
   size: string;
   color: string;
@@ -96,6 +110,7 @@ const money = (amount: number) =>
 
 export default function Checkout() {
   const navigate = useNavigate();
+  const { user, loading: authLoading } = useAuth();
 
   const [checkoutSnapshot] = useState(readCheckoutSnapshot);
   const cart = checkoutSnapshot.items;
@@ -171,7 +186,7 @@ export default function Checkout() {
     setSubmitting(true);
 
     try {
-      const requiredStock = new Map<string, RequiredVariantStock>();
+      const requiredStock = new Map<string, RequiredVariant>();
       for (const item of cart) {
         if (
           !Number.isInteger(item.quantity) ||
@@ -193,6 +208,7 @@ export default function Checkout() {
       }
 
       const { products: currentProducts } = await fetchCatalogue();
+      const requestedVariants: { variant_id: string; quantity: number }[] = [];
       for (const required of requiredStock.values()) {
         const product = currentProducts.find(
           (item) => item.id === required.productId,
@@ -200,96 +216,120 @@ export default function Checkout() {
         if (!product) {
           throw new Error("A product in your checkout is no longer available.");
         }
-        if (
-          getVariantStock(product, required.size, required.color) <
-          required.quantity
-        ) {
+        const variant = product.variants.find(
+          (item) => item.size === required.size && item.color === required.color,
+        );
+        if (!variant?.id) {
+          throw new Error(`The selected variant for ${product.name} is no longer available.`);
+        }
+        if (getVariantStock(product, required.size, required.color) < required.quantity) {
           throw new Error(
             `Insufficient stock for ${product.name} (${required.color}, ${required.size}). Please update your bag.`,
           );
         }
+        requestedVariants.push({ variant_id: variant.id, quantity: required.quantity });
       }
 
-      const orderId = `TUS${Date.now().toString().slice(-9)}`;
+      if (!user || !checkoutSnapshot.idempotencyKey) {
+        throw new Error("Sign in again before placing your order.");
+      }
 
-      const order = {
-        orderId,
-        createdAt: new Date().toISOString(),
-        checkoutMode,
-        customer: {
-          name: name.trim(),
+      const { error: profileError } = await supabase.from("profiles").upsert({
+        user_id: user.id,
+        full_name: name.trim(),
+        phone: phone.trim(),
+      }, { onConflict: "user_id" });
+      if (profileError) throw new Error(profileError.message || "Unable to save your customer details.");
+
+      let addressId: string | null = null;
+      if (fulfilment === "delivery") {
+        const addressValues = {
+          user_id: user.id,
+          recipient_name: name.trim(),
           phone: phone.trim(),
-        },
-        fulfilment: {
-          method: fulfilment,
-          address: fulfilment === "delivery" ? address.trim() : "",
-          city: fulfilment === "delivery" ? city.trim() : "",
-          pincode: fulfilment === "delivery" ? pincode.trim() : "",
-          deliveryRadiusStatus:
-            fulfilment === "delivery" ? "pending_verification" : "not_applicable",
-        },
-        payment: {
-          method: payment,
-          upiReference: payment === "upi" ? upiReference.trim() : "",
-          status: "pending_verification",
-        },
-        items: cart,
-        subtotal,
-        deliveryCharge: null,
-        total: subtotal,
-        customerNotes: notes.trim(),
-        orderStatus: "pending_confirmation",
-        storageMode: "local_demo",
-      };
-
-      const previousOrdersRaw = localStorage.getItem(ORDERS_KEY);
-      const previousOrders: unknown = JSON.parse(previousOrdersRaw || "[]");
-      if (!Array.isArray(previousOrders)) {
-        throw new Error("Unable to read existing orders.");
+          address_line: address.trim(),
+          city: city.trim(),
+          postal_code: pincode.trim(),
+          country: "India",
+        };
+        const { data: savedAddress, error: addressLookupError } = await supabase
+          .from("addresses")
+          .select("id")
+          .eq("user_id", user.id)
+          .eq("recipient_name", addressValues.recipient_name)
+          .eq("phone", addressValues.phone)
+          .eq("address_line", addressValues.address_line)
+          .eq("city", addressValues.city)
+          .eq("postal_code", addressValues.postal_code)
+          .eq("country", addressValues.country)
+          .limit(1)
+          .maybeSingle();
+        if (addressLookupError) {
+          throw new Error(addressLookupError.message || "Unable to load your saved delivery address.");
+        }
+        if (savedAddress) {
+          addressId = savedAddress.id;
+        } else {
+          const { data: newAddress, error: addressInsertError } = await supabase
+            .from("addresses")
+            .insert(addressValues)
+            .select("id")
+            .single();
+          if (addressInsertError || !newAddress) {
+            throw new Error(addressInsertError?.message || "Unable to save your delivery address.");
+          }
+          addressId = newAddress.id;
+        }
       }
-      const previousCartRaw = localStorage.getItem(CART_KEY);
-      localStorage.setItem(
-        ORDERS_KEY,
-        JSON.stringify([...previousOrders, order]),
+
+      const { data: orderId, error: orderError } = await supabase.rpc(
+        "create_order_and_reserve_stock",
+        {
+          p_idempotency_key: checkoutSnapshot.idempotencyKey,
+          p_fulfillment_method: fulfilment,
+          p_payment_method: payment,
+          p_variant_items: requestedVariants,
+          p_address_id: addressId,
+          p_customer_notes: notes.trim(),
+          p_upi_reference: payment === "upi" ? upiReference.trim() : null,
+        },
       );
+      if (orderError || !orderId) {
+        throw new Error(orderError?.message || "Unable to create your order.");
+      }
 
       try {
         if (checkoutMode === "cart") {
-          const currentCart = JSON.parse(previousCartRaw || "[]");
-          if (!Array.isArray(currentCart)) {
-            throw new Error("Unable to verify your shopping bag.");
+          const currentCart: unknown = JSON.parse(localStorage.getItem(CART_KEY) || "[]");
+          if (Array.isArray(currentCart)) {
+            const purchasedIds = new Set(cart.map(getCartItemId));
+            const remainingCart = currentCart.filter(
+              (item: CartItem) => !purchasedIds.has(getCartItemId(item)),
+            );
+            localStorage.setItem(CART_KEY, JSON.stringify(remainingCart));
           }
-          const purchasedIds = new Set(cart.map(getCartItemId));
-          const remainingCart = currentCart.filter(
-            (item: CartItem) => !purchasedIds.has(getCartItemId(item)),
-          );
-          localStorage.setItem(CART_KEY, JSON.stringify(remainingCart));
         }
         localStorage.removeItem(CHECKOUT_INTENT_KEY);
-      } catch (commitError) {
-        if (previousOrdersRaw === null) {
-          localStorage.removeItem(ORDERS_KEY);
-        } else {
-          localStorage.setItem(ORDERS_KEY, previousOrdersRaw);
-        }
-        if (previousCartRaw === null) {
-          localStorage.removeItem(CART_KEY);
-        } else {
-          localStorage.setItem(CART_KEY, previousCartRaw);
-        }
-        throw commitError;
+      } catch (cartError) {
+        console.error("Order was created, but checkout cart cleanup failed.", cartError);
       }
-
       navigate(`/order/success?orderId=${orderId}`);
     } catch (submitError) {
       setError(
         submitError instanceof Error
           ? submitError.message
-          : "Unable to place the demo order. Please try again.",
+          : "Unable to place your order. Please try again.",
       );
       submittingRef.current = false;
       setSubmitting(false);
     }
+  }
+
+  if (authLoading) {
+    return <main className="checkout-empty" role="status">Checking your sign-in…</main>;
+  }
+  if (!user) {
+    return <Navigate to={`/login?next=${encodeURIComponent("/checkout")}`} replace />;
   }
 
   if (cart.length === 0) {

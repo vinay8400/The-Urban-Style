@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
 import {
   Search,
   Package,
@@ -9,37 +9,8 @@ import {
   Store,
   XCircle,
 } from "lucide-react";
-
-interface SavedOrder {
-  orderId: string;
-  createdAt: string;
-  customer: {
-    name: string;
-    phone: string;
-  };
-  fulfilment: {
-    method: "delivery" | "pickup";
-    address: string;
-    city: string;
-    pincode: string;
-  };
-  payment: {
-    method: string;
-    status: string;
-  };
-  items: {
-    productId: string;
-    name: string;
-    price: number;
-    image: string;
-    size: string;
-    color: string;
-    quantity: number;
-  }[];
-  subtotal: number;
-  total: number;
-  orderStatus: string;
-}
+import { useAuth } from "../auth/AuthContext";
+import { fetchCustomerOrderByNumber, type StoreOrder } from "../data/supabaseOrders";
 
 const money = (amount: number) =>
   new Intl.NumberFormat("en-IN", {
@@ -53,7 +24,7 @@ const statusSteps = [
   { key: "confirmed", label: "Order Confirmed", icon: CheckCircle2 },
   { key: "preparing", label: "Preparing Order", icon: Clock3 },
   { key: "dispatched", label: "Ready / Dispatched", icon: Truck },
-  { key: "delivered", label: "Delivered / Collected", icon: Store },
+  { key: "fulfilled", label: "Delivered / Collected", icon: Store },
 ];
 
 const statusLabels: Record<string, string> = {
@@ -61,18 +32,19 @@ const statusLabels: Record<string, string> = {
   confirmed: "Order confirmed",
   preparing: "Preparing your order",
   dispatched: "Ready for pickup / Out for delivery",
-  delivered: "Delivered / Collected",
+  fulfilled: "Delivered / Collected",
   cancelled: "Order cancelled",
 };
 
 export default function TrackOrder() {
+  const { user, loading: authLoading } = useAuth();
   const [orderId, setOrderId] = useState("");
   const [phone, setPhone] = useState("");
-  const [order, setOrder] = useState<SavedOrder | null>(null);
+  const [order, setOrder] = useState<StoreOrder | null>(null);
   const [error, setError] = useState("");
   const [searched, setSearched] = useState(false);
 
-  function handleSearch(event: React.FormEvent<HTMLFormElement>) {
+  async function handleSearch(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
     setOrder(null);
@@ -84,34 +56,22 @@ export default function TrackOrder() {
     }
 
     try {
-      const saved = JSON.parse(
-        localStorage.getItem("urban-style-orders") || "[]",
-      );
-
-      if (!Array.isArray(saved)) {
-        setError("Unable to read order records.");
-        return;
-      }
-
-      const found = saved.find(
-        (item: SavedOrder) =>
-          item.orderId.toLowerCase() === orderId.trim().toLowerCase() &&
-          item.customer.phone === phone.trim(),
-      );
-
-      if (!found) {
+      const found = await fetchCustomerOrderByNumber(orderId.trim());
+      if (!found || found.customer_phone_snapshot !== phone.trim()) {
         setError("No matching order found. Check your Order ID and mobile number.");
         return;
       }
-
       setOrder(found);
-    } catch {
-      setError("Unable to search orders. Please try again.");
+    } catch (searchError) {
+      setError(searchError instanceof Error ? searchError.message : "Unable to search orders. Please try again.");
     }
   }
 
+  if (authLoading) return <main className="track-order-page" role="status">Checking your sign-in…</main>;
+  if (!user) return <Navigate to={`/login?next=${encodeURIComponent("/track-order")}`} replace />;
+
   const currentIndex = order
-    ? statusSteps.findIndex((step) => step.key === order.orderStatus)
+    ? statusSteps.findIndex((step) => step.key === order.order_status)
     : -1;
 
   return (
@@ -129,7 +89,7 @@ export default function TrackOrder() {
             <input
               value={orderId}
               onChange={(event) => setOrderId(event.target.value)}
-              placeholder="Example: TUS362801072"
+              placeholder="              Example: TUS-AB12CD34EF56"
               required
             />
           </label>
@@ -164,17 +124,17 @@ export default function TrackOrder() {
           <div className="track-order-result-heading">
             <div>
               <span>ORDER REFERENCE</span>
-              <h2>{order.orderId}</h2>
+              <h2>{order.order_number}</h2>
               <p>
-                Placed on {new Date(order.createdAt).toLocaleDateString("en-IN")}
+                Placed on {new Date(order.created_at).toLocaleDateString("en-IN")}
               </p>
             </div>
             <strong className="track-order-status-badge">
-              {statusLabels[order.orderStatus] || "Status unavailable"}
+              {statusLabels[order.order_status] || "Status unavailable"}
             </strong>
           </div>
 
-          {order.orderStatus === "cancelled" ? (
+          {order.order_status === "cancelled" ? (
             <div className="track-order-cancelled">
               <XCircle size={26} />
               <strong>This order has been cancelled.</strong>
@@ -210,18 +170,18 @@ export default function TrackOrder() {
 
             <div className="track-order-info-row">
               <span>Customer</span>
-              <strong>{order.customer.name}</strong>
+              <strong>{order.customer_name_snapshot}</strong>
             </div>
 
             <div className="track-order-info-row">
               <span>Mobile</span>
-              <strong>{order.customer.phone}</strong>
+              <strong>{order.customer_phone_snapshot}</strong>
             </div>
 
             <div className="track-order-info-row">
               <span>Fulfilment</span>
               <strong>
-                {order.fulfilment.method === "pickup"
+                {order.fulfillment_method === "pickup"
                   ? "Store Pickup"
                   : "Local Delivery"}
               </strong>
@@ -230,9 +190,9 @@ export default function TrackOrder() {
             <div className="track-order-info-row">
               <span>Payment</span>
               <strong>
-                {order.payment.method === "cod"
+                {order.payment_method === "cod"
                   ? "Cash on Delivery"
-                  : order.payment.method === "upi"
+                  : order.payment_method === "upi"
                     ? "UPI"
                     : "Pay at Store"}
               </strong>
@@ -240,7 +200,7 @@ export default function TrackOrder() {
 
             <div className="track-order-info-row">
               <span>Payment Status</span>
-              <strong>{order.payment.status.replaceAll("_", " ")}</strong>
+              <strong>{order.payments[0]?.status.replaceAll("_", " ") ?? "Pending"}</strong>
             </div>
 
             <div className="track-order-info-row">
@@ -252,18 +212,17 @@ export default function TrackOrder() {
           <div className="track-order-products">
             <h3>Items in this Order</h3>
 
-            {order.items.map((item, index) => (
+            {order.items.map((item) => (
               <div
                 className="track-order-product"
-                key={`${item.productId}-${item.size}-${index}`}
+                key={item.id}
               >
-                <img src={item.image} alt={item.name} />
                 <div>
-                  <strong>{item.name}</strong>
-                  <small>{item.color} · Size {item.size}</small>
+                  <strong>{item.product_name_snapshot}</strong>
+                  <small>{item.color_snapshot} · Size {item.size_snapshot}</small>
                   <small>Quantity: {item.quantity}</small>
                 </div>
-                <b>{money(item.price * item.quantity)}</b>
+                <b>{money(item.line_total)}</b>
               </div>
             ))}
           </div>
