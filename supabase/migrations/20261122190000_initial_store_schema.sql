@@ -32,6 +32,19 @@ $function$;
 revoke all on function private.is_store_admin() from public, anon, authenticated;
 grant execute on function private.is_store_admin() to authenticated;
 
+create or replace function public.is_store_admin()
+returns boolean
+language sql
+stable
+security invoker
+set search_path = pg_catalog, private
+as $function$
+  select private.is_store_admin();
+$function$;
+
+revoke all on function public.is_store_admin() from public, anon, authenticated;
+grant execute on function public.is_store_admin() to authenticated;
+
 create or replace function private.set_updated_at()
 returns trigger
 language plpgsql

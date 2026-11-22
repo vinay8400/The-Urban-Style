@@ -8,6 +8,16 @@ import Cart from "./pages/Cart";
 import Checkout from "./pages/Checkout";
 import OrderSuccess from "./pages/OrderSuccess";
 import TrackOrder from "./pages/TrackOrder";
+import {
+  AccountPage,
+  AuthRedirectHandler,
+  ForgotPasswordPage,
+  LoginPage,
+  RequireAdmin,
+  RequireAuth,
+  ResetPasswordPage,
+  SignupPage,
+} from "./pages/Auth";
 import AdminDashboard from "./admin/pages/AdminDashboard";
 import CategoryManagement from "./admin/pages/CategoryManagement";
 import AdminProducts from "./admin/pages/AdminProducts";
@@ -36,6 +46,7 @@ function NotFound() {
 export default function App() {
   return (
     <>
+      <AuthRedirectHandler />
       <Header />
 
       <Routes>
@@ -52,8 +63,12 @@ export default function App() {
         <Route path="/order/success" element={<OrderSuccess />} />
         <Route path="/track-order" element={<TrackOrder />} />
 
-        <Route path="/account" element={<PlaceholderPage title="My Account" description="Manage your profile, addresses and account settings." />} />
-        <Route path="/account/orders" element={<PlaceholderPage title="My Orders" description="View your order history and order details." />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/signup" element={<SignupPage />} />
+        <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/account" element={<RequireAuth><AccountPage /></RequireAuth>} />
+        <Route path="/account/orders" element={<RequireAuth><PlaceholderPage title="My Orders" description="View your order history and order details." /></RequireAuth>} />
         <Route path="/wishlist" element={<PlaceholderPage title="My Wishlist" description="Your saved fashion products will appear here." />} />
         <Route path="/size-guide" element={<PlaceholderPage title="Size Guide" description="Find the right size with our measurement guide." />} />
 
@@ -61,11 +76,11 @@ export default function App() {
         <Route path="/store/:storeId" element={<PlaceholderPage title="Store Profile" description="Explore a vendor's store, location and products." />} />
         <Route path="/contact" element={<PlaceholderPage title="Contact Us" description="Connect with THE URBAN STYLE." />} />
 
-        <Route path="/admin/categories" element={<CategoryManagement />} />
-        <Route path="/admin/products/new" element={<AddProduct />} />
-        <Route path="/admin/products/edit/:productId" element={<AddProduct />} />
-        <Route path="/admin/products" element={<AdminProducts />} />
-        <Route path="/admin/*" element={<AdminDashboard />} />
+        <Route path="/admin/categories" element={<RequireAdmin><CategoryManagement /></RequireAdmin>} />
+        <Route path="/admin/products/new" element={<RequireAdmin><AddProduct /></RequireAdmin>} />
+        <Route path="/admin/products/edit/:productId" element={<RequireAdmin><AddProduct /></RequireAdmin>} />
+        <Route path="/admin/products" element={<RequireAdmin><AdminProducts /></RequireAdmin>} />
+        <Route path="/admin/*" element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
         <Route path="/vendor/*" element={<PlaceholderPage title="Vendor Dashboard" description="Vendor store management portal." />} />
 
         <Route path="*" element={<NotFound />} />

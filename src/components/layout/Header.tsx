@@ -7,7 +7,9 @@ import {
   ShoppingBag,
   UserRound,
   MapPin,
+  LogOut,
 } from "lucide-react";
+import { useAuth } from "../../auth/AuthContext";
 import {
   categoryPathSegments,
   searchPublishedProducts,
@@ -40,12 +42,24 @@ const navigation = [
 
 export default function Header() {
   const navigate = useNavigate();
+  const { user, isAdmin, signOut } = useAuth();
   const products = usePublishedAdminProducts();
   const [menuOpen, setMenuOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [recentSearches, setRecentSearches] = useState(readRecentSearches);
+  const [signOutError, setSignOutError] = useState("");
+
+  async function handleSignOut() {
+    setSignOutError("");
+    const error = await signOut();
+    if (error) {
+      setSignOutError(error);
+    } else {
+      navigate("/login", { replace: true });
+    }
+  }
 
   useEffect(() => {
     const timeout = window.setTimeout(() => setDebouncedSearch(search.trim()), 275);
@@ -140,15 +154,34 @@ export default function Header() {
           <Link to="/search" aria-label="Search" title="Search">
             <Search />
           </Link>
-          <Link to="/account" aria-label="Account" title="My account">
+          <Link
+            to={user ? (isAdmin ? "/admin" : "/account") : "/login"}
+            className="header-account-link"
+            aria-label={user ? `${isAdmin ? "Admin dashboard" : "Account"}: ${user.email ?? "signed in"}` : "Sign in"}
+            title={user ? (isAdmin ? "Admin dashboard" : user.email ?? "My account") : "Sign in"}
+          >
             <UserRound />
+            <span>{user ? (isAdmin ? "Admin" : "Account") : "Sign in"}</span>
           </Link>
           <Link to="/cart" className="header-cart" aria-label="Shopping cart">
             <ShoppingBag />
             <span>0</span>
           </Link>
+          {user && (
+            <button
+              className="header-logout"
+              type="button"
+              onClick={() => void handleSignOut()}
+              aria-label="Sign out"
+              title="Sign out"
+            >
+              <LogOut />
+              <span>Sign out</span>
+            </button>
+          )}
         </div>
       </header>
+      {signOutError && <p className="header-auth-error" role="alert">{signOutError}</p>}
 
       <div className="header-search-row">
         <form
