@@ -185,12 +185,15 @@ export async function fetchCatalogue(admin = false): Promise<CatalogueResult> {
       .from(PRODUCT_IMAGES_BUCKET)
       .createSignedUrls(allPaths, 3600);
     if (signedError) {
-      imageError = "Product records loaded, but private product images are unavailable. Check Storage read policies.";
+      imageError = "Product records loaded, but Supabase Storage rejected the signed-image request. Check the product-images bucket and its published-product SELECT policy.";
     } else {
       signedImages?.forEach((image) => {
         if (image.path && image.signedUrl) signedByPath.set(image.path, image.signedUrl);
-        else imageError = "Some private product images could not be signed. Check Storage read policies.";
       });
+      const unsignedCount = allPaths.filter((path) => !signedByPath.has(path)).length;
+      if (unsignedCount > 0) {
+        imageError = `${unsignedCount} private product image(s) could not be signed. Confirm storage.objects SELECT permits the exact product_images.storage_path for published products in the product-images bucket.`;
+      }
     }
   }
 

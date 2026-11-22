@@ -1,4 +1,11 @@
-import { Link, Route, Routes } from "react-router-dom";
+import { useLayoutEffect, useRef } from "react";
+import {
+  Link,
+  Route,
+  Routes,
+  useLocation,
+  useNavigationType,
+} from "react-router-dom";
 import Header from "./components/layout/Header";
 import Footer from "./components/layout/Footer";
 import Home from "./pages/Home";
@@ -43,9 +50,27 @@ function NotFound() {
   );
 }
 
+function RouteScrollManager() {
+  const { pathname, hash } = useLocation();
+  const navigationType = useNavigationType();
+  const previousPathname = useRef(pathname);
+
+  useLayoutEffect(() => {
+    const pathChanged = previousPathname.current !== pathname;
+    previousPathname.current = pathname;
+
+    if (pathChanged && navigationType !== "POP" && !hash) {
+      window.scrollTo({ top: 0, left: 0, behavior: "instant" });
+    }
+  }, [hash, navigationType, pathname]);
+
+  return null;
+}
+
 export default function App() {
   return (
     <>
+      <RouteScrollManager />
       <AuthRedirectHandler />
       <Header />
 
