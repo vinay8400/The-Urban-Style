@@ -10,12 +10,10 @@ import {
   Search,
 } from "lucide-react";
 import {
-  categoryPathSegments,
   categorySlug,
   productSearchScore,
 } from "../data/adminProductCatalog";
-import { useSupabaseCatalogue } from "../data/supabaseCatalogue";
-import type { Product } from "../data/products";
+import { useSupabaseCatalogue, type CatalogueCategory } from "../data/supabaseCatalogue";
 
 const money = (amount: number) =>
   new Intl.NumberFormat("en-IN", {
@@ -32,20 +30,72 @@ function decodeSegment(segment: string): string {
   }
 }
 
-function categoryFilterOptions(products: Product[]) {
-  const options = new Map<string, string>();
-  products.forEach((product) => {
-    const segments = categoryPathSegments(product.category);
-    segments.forEach((_, index) => {
-      const path = segments.slice(0, index + 1);
-      options.set(path.map(categorySlug).join("/"), path.join(" / "));
-    });
+function categoryFilterOptions(categories: CatalogueCategory[]) {
+  const categoryMap = new Map(categories.map((category) => [category.id, category]));
+  return categories.map((category) => {
+    const path: string[] = [];
+    let current: CatalogueCategory | undefined = category;
+    const visited = new Set<string>();
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      path.unshift(current.name);
+      current = current.parentId ? categoryMap.get(current.parentId) : undefined;
+    }
+    return { value: category.id, label: path.join(" / ") };
   });
-  return [...options].map(([value, label]) => ({ value, label }));
+}
+
+function resolveCategoryPath(
+  categories: CatalogueCategory[],
+  segments: string[],
+): CatalogueCategory[] {
+  const path: CatalogueCategory[] = [];
+  let parentId: string | null = null;
+  for (const [index, segment] of segments.entries()) {
+    const siblings = categories.filter((category) => category.parentId === parentId);
+    const category = siblings.find((item) => categorySlug(item.name) === segment)
+      ?? (index === 0 && segment === "children"
+        ? siblings.find((item) => ["child", "children", "kids"].includes(categorySlug(item.name)))
+        : undefined);
+    if (!category) return [];
+    path.push(category);
+    parentId = category.id;
+  }
+  return path;
+}
+
+function titleCaseSlug(value: string) {
+  return value
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+function collectionCategorySlugs(slug: string | undefined) {
+  if (slug === "t-shirts") return ["t-shirt", "t-shirts", "tee", "tees"];
+  return slug ? [slug] : [];
+}
+
+function belongsToPrimaryCategory(
+  category: CatalogueCategory,
+  categories: CatalogueCategory[],
+) {
+  const categoryMap = new Map(categories.map((item) => [item.id, item]));
+  const visited = new Set<string>();
+  let current: CatalogueCategory | undefined = category;
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    if (!current.parentId) {
+      const rootName = categorySlug(current.name);
+      return ["men", "women", "accessories", "child", "children", "kids"].includes(rootName);
+    }
+    current = categoryMap.get(current.parentId);
+  }
+  return false;
 }
 
 export default function Products() {
-  const { products, loading, error, imageError } = useSupabaseCatalogue();
+  const { products, categories, loading, error, imageError } = useSupabaseCatalogue();
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
@@ -73,24 +123,44 @@ export default function Products() {
         : [],
     [location.pathname],
   );
+  const isCollectionRoute = routeCategory[0] === "collection";
+  const collectionCategoryIds = useMemo(
+    () => isCollectionRoute
+      ? categories
+          .filter((category) =>
+            category.parentId !== null &&
+            collectionCategorySlugs(routeCategory[1]).includes(categorySlug(category.name)) &&
+            belongsToPrimaryCategory(category, categories),
+          )
+          .map((category) => category.id)
+      : [],
+    [categories, isCollectionRoute, routeCategory],
+  );
+  const resolvedCategoryPath = useMemo(
+    () => isCollectionRoute ? [] : resolveCategoryPath(categories, routeCategory),
+    [categories, isCollectionRoute, routeCategory],
+  );
+  const activeCategory = resolvedCategoryPath.at(-1);
+  const childCategories = categories.filter((category) =>
+    category.parentId === activeCategory?.id && category.active,
+  );
+  const categoryRoutePath = resolvedCategoryPath
+    .map((category) => categorySlug(category.name))
+    .join("/");
   const maxCataloguePrice = useMemo(
     () => Math.max(3000, ...products.map((product) => product.price)),
     [products],
   );
   const title = onSearchPage
     ? "Search Results"
-    : routeCategory
-        .map((segment) =>
-          segment
-            .split("-")
-            .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-            .join(" "),
-        )
-        .join(" / ") || "All Products";
+    : isCollectionRoute
+      ? titleCaseSlug(routeCategory[1] ?? "collection")
+      : resolvedCategoryPath.map((category) => category.name).join(" / ") ||
+        (routeCategory.length ? "Category not found" : "All Products");
 
   const categoryOptions = useMemo(
-    () => categoryFilterOptions(products),
-    [products],
+    () => categoryFilterOptions(categories),
+    [categories],
   );
   const sizes = useMemo(
     () => [...new Set(products.flatMap((product) => product.sizes))].sort(),
@@ -118,19 +188,14 @@ export default function Products() {
 
   const filteredProducts = useMemo(() => {
     let result = products.filter((product) => {
-      const segments = categoryPathSegments(product.category);
-      const categoryPath = segments.map(categorySlug);
       const matchesRouteCategory =
         routeCategory.length === 0 ||
-        routeCategory.every((segment, index) => categoryPath[index] === segment);
+        (isCollectionRoute
+          ? collectionCategoryIds.some((id) => product.categoryIdPath.includes(id))
+          : Boolean(activeCategory && product.categoryIdPath.includes(activeCategory.id)));
       const matchesSelectedCategory =
         selectedCategories.length === 0 ||
-        selectedCategories.some((selectedPath) => {
-          const selectedSegments = selectedPath.split("/");
-          return selectedSegments.every(
-            (segment, index) => categoryPath[index] === segment,
-          );
-        });
+        selectedCategories.some((categoryId) => product.categoryIdPath.includes(categoryId));
       const matchesSize =
         selectedSizes.length === 0 ||
         selectedSizes.some((size) => product.sizes.includes(size));
@@ -178,6 +243,9 @@ export default function Products() {
   }, [
     products,
     routeCategory,
+    isCollectionRoute,
+    collectionCategoryIds,
+    activeCategory,
     selectedCategories,
     selectedSizes,
     selectedColors,
@@ -267,6 +335,25 @@ export default function Products() {
           <SlidersHorizontal size={17} /> Filters
         </button>
       </section>
+
+      {childCategories.length > 0 && (
+        <nav className="listing-subcategory-nav" aria-label={`${activeCategory?.name ?? "Category"} subcategories`}>
+          {childCategories.map((category) => (
+            <Link
+              to={`/category/${categoryRoutePath}/${categorySlug(category.name)}`}
+              key={category.id}
+            >
+              {category.name}
+            </Link>
+          ))}
+        </nav>
+      )}
+
+      {routeCategory.length > 0 && !isCollectionRoute && !activeCategory && (
+        <p className="catalogue-error" role="status">
+          This category is unavailable or inactive.
+        </p>
+      )}
 
       <div className="listing-toolbar">
         <span>{filteredProducts.length} Products</span>

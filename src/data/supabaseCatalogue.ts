@@ -107,6 +107,24 @@ function buildCategoryPath(
   return parts.join(" / ");
 }
 
+function buildCategoryIdPath(
+  categoryId: string | null,
+  categoryMap: Map<string, CategoryRow>,
+) {
+  const ids: string[] = [];
+  const visited = new Set<string>();
+  let currentId = categoryId;
+  while (currentId) {
+    if (visited.has(currentId)) return [];
+    visited.add(currentId);
+    const category = categoryMap.get(currentId);
+    if (!category) return [];
+    ids.unshift(category.id);
+    currentId = category.parent_id;
+  }
+  return ids;
+}
+
 export async function fetchCatalogue(admin = false): Promise<CatalogueResult> {
   const [categoryResult, productResult] = await Promise.all([
     supabase.from("categories").select("*").order("name"),
@@ -199,6 +217,7 @@ export async function fetchCatalogue(admin = false): Promise<CatalogueResult> {
       name: row.name,
       category: buildCategoryPath(row.category_id, categoryMap),
       categoryId: row.category_id ?? undefined,
+      categoryIdPath: buildCategoryIdPath(row.category_id, categoryMap),
       description: row.description,
       price: Number(row.selling_price),
       oldPrice: Number(row.original_price),

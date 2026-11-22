@@ -11,6 +11,7 @@ export interface Product {
   name: string;
   category: string;
   categoryId?: string;
+  categoryIdPath: string[];
   description: string;
   price: number;
   oldPrice: number;

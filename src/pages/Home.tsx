@@ -3,12 +3,56 @@ import { ArrowRight, Heart, Star, Truck, ShieldCheck, RefreshCw } from "lucide-r
 import { useSupabaseCatalogue } from "../data/supabaseCatalogue";
 import type { Product } from "../data/products";
 
-const categoryImages: Record<string, string> = {
-  men: "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=700&q=85",
-  women: "https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=700&q=85",
-  kids: "https://images.unsplash.com/photo-1503919005314-30d93d07d823?auto=format&fit=crop&w=700&q=85",
-  accessories: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=700&q=85",
-};
+const primaryCategories = [
+  {
+    name: "Men",
+    slug: "men",
+    image: "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?auto=format&fit=crop&w=700&q=85",
+  },
+  {
+    name: "Women",
+    slug: "women",
+    image: "https://images.unsplash.com/photo-1483985988355-763728e1935b?auto=format&fit=crop&w=700&q=85",
+  },
+  {
+    name: "Children",
+    slug: "children",
+    image: "https://images.unsplash.com/photo-1503919005314-30d93d07d823?auto=format&fit=crop&w=700&q=85",
+  },
+  {
+    name: "Accessories",
+    slug: "accessories",
+    image: "https://images.unsplash.com/photo-1523275335684-37898b6baf30?auto=format&fit=crop&w=700&q=85",
+  },
+];
+
+const shopCollections = [
+  {
+    name: "Pants",
+    slug: "pants",
+    image: "https://images.unsplash.com/photo-1542272604-787c3835535d?auto=format&fit=crop&w=500&q=80",
+  },
+  {
+    name: "Shirts",
+    slug: "shirts",
+    image: "https://images.unsplash.com/photo-1596755094514-f87e34085b2c?auto=format&fit=crop&w=500&q=80",
+  },
+  {
+    name: "Jackets",
+    slug: "jackets",
+    image: "https://images.unsplash.com/photo-1551028719-00167b16eac5?auto=format&fit=crop&w=500&q=80",
+  },
+  {
+    name: "Jeans",
+    slug: "jeans",
+    image: "https://images.unsplash.com/photo-1541099649105-f69ad21f3246?auto=format&fit=crop&w=500&q=80",
+  },
+  {
+    name: "T-shirts",
+    slug: "t-shirts",
+    image: "https://images.unsplash.com/photo-1521572163474-6864f9cf17ab?auto=format&fit=crop&w=500&q=80",
+  },
+];
 
 const money = (amount: number) =>
   new Intl.NumberFormat("en-IN", {
@@ -50,7 +94,7 @@ function ProductCard({ product }: { product: Product }) {
 }
 
 export default function Home() {
-  const { products, categories, loading, error, imageError } = useSupabaseCatalogue();
+  const { products, loading, error, imageError } = useSupabaseCatalogue();
 
   return (
     <main className="home-page">
@@ -95,15 +139,38 @@ export default function Home() {
         </div>
 
         <div className="home-category-grid">
-          {categories.filter((category) => category.active && !category.parentId).map((category) => (
+          {primaryCategories.map((category) => (
             <Link
-              to={`/category/${category.name.toLowerCase()}`}
+              to={`/category/${category.slug}`}
               className="home-category-card"
-              key={category.id}
+              key={category.slug}
             >
-              <img src={categoryImages[category.name.toLowerCase()] ?? categoryImages.men} alt={category.name} loading="lazy" />
+              <img src={category.image} alt="" loading="lazy" />
               <span>{category.name}</span>
               <ArrowRight size={17} />
+            </Link>
+          ))}
+        </div>
+      </section>
+
+      <section className="home-section home-collections-section">
+        <div className="home-section-heading">
+          <div>
+            <span className="home-eyebrow">FIND YOUR NEXT FAVOURITE</span>
+            <h2>Shop by Collection</h2>
+          </div>
+          <Link to="/collections">Explore all <ArrowRight size={16} /></Link>
+        </div>
+        <div className="home-collection-grid">
+          {shopCollections.map((collection) => (
+            <Link
+              to={`/category/collection/${collection.slug}`}
+              className="home-collection-card"
+              key={collection.slug}
+            >
+              <img src={collection.image} alt="" loading="lazy" />
+              <span>{collection.name}</span>
+              <ArrowRight size={16} />
             </Link>
           ))}
         </div>
